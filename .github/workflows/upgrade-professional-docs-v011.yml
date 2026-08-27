@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Repair V0.11 patch boundary
+        run: python scripts/fix_upgrade_professional_v011.py
       - name: Apply V0.11 upgrade
         run: python scripts/upgrade_professional_documents_v011.py
       - name: Install dependencies
