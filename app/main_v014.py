@@ -9,7 +9,7 @@ from app.live_state import sanitize_live_state
 
 # Keep the proven V0.13 API/DB implementation and replace only the document/live-state
 # policy layer. Existing endpoint functions resolve these globals at call time.
-base.app.version = "0.14.1"
+base.app.version = "0.14.0"
 base.build_initial_documents = build_delivery_documents
 
 _BASE_DOCS = build_delivery_documents({})
@@ -213,5 +213,5 @@ def apply_live_draft_state(conn, project_id: int, member_name: str, state: dict[
 base.build_live_draft_documents = build_live_draft_documents
 base.apply_live_draft_state = apply_live_draft_state
 
-# Export the same FastAPI application with the V0.14.1 policy layer installed.
+# Export the same FastAPI application with the V0.14 policy layer installed.
 app = base.app
