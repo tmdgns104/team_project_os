@@ -370,3 +370,9 @@ Bridge 기본 실행은 `agy -p ... --output-format text --print-timeout 45m`이
 - `첨부 패키지 ZIP`은 13종 문서, Traceability Matrix, Process/Architecture/Data Flow Mermaid 문서, 구조화 snapshot JSON을 묶어 생성합니다.
 
 > 현재 Export는 Markdown/ZIP 중심입니다. PDF/DOCX 제출본 렌더링은 후속 버전에서 확장할 수 있습니다.
+
+## Universal Project Setup (V0.4)
+
+새 프로젝트 입력은 웹/API 개발에 한정되지 않습니다. 범용 프로젝트를 기본값으로 두고 소프트웨어, AI/데이터, 임베디드/하드웨어/IoT, 제조/자동화, 연구개발/PoC, 업무개선, 제품/서비스 기획, 교육/콘텐츠, 행사/캠페인까지 같은 Project OS에서 시작할 수 있습니다.
+
+프로젝트 생성 전 **작성 품질 점검**을 누르면 목표·문제·이해관계자·산출물·KPI·범위·제약의 구체성을 점수와 피드백으로 확인합니다. 프로젝트 유형별 추가 확인 질문도 제공합니다. 입력 내용은 기획서, 계획서, 요구사항 정의서, 마일스톤, 백로그의 초기 초안에 반영됩니다.

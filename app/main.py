@@ -17,13 +17,15 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.project_intake import build_initial_documents, evaluate_intake, intake_metadata
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.getenv("PROJECT_OS_DB", BASE_DIR / "project_os.db"))
 ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
 SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.3.0")
+app = FastAPI(title="Team Project OS", version="0.4.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
@@ -72,12 +74,19 @@ def rowdict(row: sqlite3.Row | None) -> dict[str, Any] | None:
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     goal: str = Field(min_length=2, max_length=1000)
-    description: str = Field(default="", max_length=2000)
+    project_type: str = Field(default="generic", max_length=80)
     problem: str = Field(default="", max_length=4000)
-    users: str = Field(default="", max_length=2000)
+    users: str = Field(default="", max_length=3000)
+    deliverables: str = Field(default="", max_length=4000)
     success_criteria: str = Field(default="", max_length=4000)
     scope: str = Field(default="", max_length=4000)
+    current_state: str = Field(default="", max_length=4000)
+    target_state: str = Field(default="", max_length=4000)
     constraints: str = Field(default="", max_length=4000)
+    schedule: str = Field(default="", max_length=3000)
+    team: str = Field(default="", max_length=3000)
+    risks: str = Field(default="", max_length=4000)
+    description: str = Field(default="", max_length=4000)
 
 
 class TaskCreate(BaseModel):
@@ -384,44 +393,8 @@ def ensure_project_documents(conn: sqlite3.Connection, project_id: int) -> None:
 
 
 def apply_project_brief_to_documents(conn: sqlite3.Connection, project_id: int, payload: ProjectCreate) -> None:
-    proposal = f"""# 기획서
-
-## 1. 배경 및 문제 정의
-{payload.problem or payload.description or '- 작성 필요'}
-
-## 2. 프로젝트 목표
-{payload.goal}
-
-## 3. 대상 사용자
-{payload.users or '- 작성 필요'}
-
-## 4. 핵심 가치
-{payload.description or '- 작성 필요'}
-
-## 5. 성공 기준
-{payload.success_criteria or '- 작성 필요'}
-
-## 6. 범위 / 제외 범위
-{payload.scope or '- 작성 필요'}
-"""
-    plan = f"""# 계획서
-
-## 1. 추진 범위
-{payload.scope or '- 작성 필요'}
-
-## 2. 일정
-- 마일스톤 문서에서 정의
-
-## 3. 역할과 책임
-- Team & AI에서 정의
-
-## 4. 개발/운영 전략
-{payload.description or '- 작성 필요'}
-
-## 5. 리스크와 대응 / 제약조건
-{payload.constraints or '- 작성 필요'}
-"""
-    for doc_type, content in (("proposal", proposal), ("plan", plan)):
+    generated = build_initial_documents(payload.model_dump())
+    for doc_type, content in generated.items():
         conn.execute(
             "UPDATE documents SET content=?,updated_by='Project Setup',updated_at=? WHERE project_id=? AND doc_type=?",
             (content, now(), project_id, doc_type),
@@ -581,7 +554,28 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.3.0"}
+    return {"status": "ok", "version": "0.4.0"}
+
+
+@app.get("/api/project-intake/meta")
+def project_intake_meta(x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    return intake_metadata()
+
+
+@app.post("/api/project-intake/preview")
+def project_intake_preview(payload: ProjectCreate, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    data = payload.model_dump()
+    quality = evaluate_intake(data)
+    generated = build_initial_documents(data)
+    return {
+        "quality": quality,
+        "preview": {
+            "proposal": generated["proposal"],
+            "plan": generated["plan"],
+        },
+    }
 
 
 @app.get("/api/projects", dependencies=[])
@@ -602,8 +596,11 @@ async def create_project(payload: ProjectCreate, x_access_key: str | None = Head
         pid = cur.lastrowid
         ensure_project_documents(conn, pid)
         apply_project_brief_to_documents(conn, pid, payload)
-        add_activity(conn, pid, "project", "프로젝트가 생성되었습니다.")
+        quality = evaluate_intake(payload.model_dump())
+        add_activity(conn, pid, "project", f"프로젝트가 생성되었습니다. 초기 정의 품질 {quality['score']}점")
         project = rowdict(conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
+        if project is not None:
+            project["intake_quality"] = quality
     return project
 
 

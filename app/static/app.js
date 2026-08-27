@@ -153,6 +153,9 @@ function openModal(title, html, onSubmit){
 }
 function field(name,label,value='',type='text'){ return `<div class="field"><label>${esc(label)}</label><input name="${name}" type="${type}" value="${esc(value)}" required></div>`; }
 function textarea(name,label,value=''){ return `<div class="field"><label>${esc(label)}</label><textarea name="${name}">${esc(value)}</textarea></div>`; }
+function guidedTextarea(name,label,hint,example,value=''){
+  return `<div class="field intake-field"><label>${esc(label)}</label><small class="field-hint">${esc(hint)}</small><textarea name="${name}" placeholder="${esc(example)}">${esc(value)}</textarea></div>`;
+}
 function selectField(name,label,options,current=''){ return `<div class="field"><label>${esc(label)}</label><select name="${name}">${options.map(([v,t])=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(t)}</option>`).join('')}</select></div>`; }
 function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',documents:'document-help',traceability:'add-trace-link',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
 function handleAction(action, view){
@@ -161,11 +164,49 @@ function handleAction(action, view){
   if(action==='add-node') return addNode(view); if(action==='add-edge') return addEdge(view); if(action==='add-idea') return addIdea(); if(action==='add-decision') return addDecision(); if(action==='add-member') return addMember(); if(action==='add-ai-job') return addAIJob(); if(action==='bridge-help') return bridgeHelp();
 }
 function newProject(){
-  openModal('새 프로젝트 시작',field('name','프로젝트 이름')+textarea('goal','프로젝트 목표')+textarea('problem','해결하려는 문제')+textarea('users','대상 사용자 / 이해관계자')+textarea('success_criteria','성공 기준 / KPI')+textarea('scope','포함 범위 / 제외 범위')+textarea('constraints','기술·일정·예산·운영 제약')+textarea('description','추가 설명'),async fd=>{
+  const types=[
+    ['generic','범용 프로젝트'],['software','소프트웨어 / 앱 / 시스템'],['ai_data','AI / 데이터'],
+    ['embedded_hardware','임베디드 / 하드웨어 / IoT'],['manufacturing_automation','제조 / 자동화 / 스마트팩토리'],
+    ['research_rnd','연구개발 / 실험 / PoC'],['business_process','업무개선 / 운영 / 프로세스'],
+    ['product_service','제품 / 서비스 / 사업 기획'],['education_content','교육 / 콘텐츠 / 가이드'],
+    ['event_campaign','행사 / 캠페인 / 비개발 프로젝트']
+  ];
+  const html=`<div class="notice"><strong>작성 원칙</strong><br>좋은 입력은 길기만 한 문장이 아니라 <b>현재 문제 → 목표 → 산출물 → 측정 가능한 성공기준 → 범위/제약</b>이 서로 이어집니다. 모르는 항목은 추측하지 말고 '미정' 또는 '확인 필요'라고 적어도 됩니다.</div>`+
+    selectField('project_type','프로젝트 유형',types,'generic')+
+    field('name','프로젝트 이름')+
+    guidedTextarea('goal','프로젝트 목표','무엇을, 어디/누구에게 적용해, 어떤 결과를 만들지 적으세요.','예: 생산라인 제품을 자동 검사해 불량 판정과 결과 기록을 자동화한다.')+
+    guidedTextarea('problem','해결하려는 문제 / 배경','현재 무엇이 불편하거나 비효율적이며 왜 해결해야 하는지 적으세요.','예: 육안 검사 편차와 누락이 발생하고 결과 집계가 수작업이다.')+
+    guidedTextarea('users','대상 사용자 / 이해관계자','직접 사용자·운영자·결과 확인자·승인자를 구분하면 좋습니다.','예: 작업자(사용), 품질팀(확인), 설비팀(운영), 책임자(승인)')+
+    guidedTextarea('deliverables','주요 산출물','프로젝트가 끝났을 때 실제로 남아 있어야 하는 결과물을 적으세요.','예: 실행 결과물, 운영 절차, 사용자 가이드, 검증 결과서')+
+    guidedTextarea('success_criteria','성공 기준 / KPI','숫자·임계값·완료조건처럼 성공 여부를 판정할 수 있게 적으세요.','예: 처리시간 30% 단축, 오류 50% 감소, 인수 테스트 95% 이상 통과')+
+    guidedTextarea('scope','포함 범위 / 제외 범위','이번에 하는 것과 하지 않는 것을 모두 적으세요.','예: 포함=핵심 프로세스/검증, 제외=전사 시스템 전체 교체')+
+    guidedTextarea('current_state','현재 상태 (AS-IS)','현재 사람·시스템·장비가 어떤 순서로 처리하는지 적으세요.','예: 요청 접수 → 수작업 처리 → 엑셀 기록 → 담당자 보고')+
+    guidedTextarea('target_state','목표 상태 (TO-BE)','완료 후 흐름이 어떻게 바뀌어야 하는지 적으세요.','예: 요청 접수 → 표준 처리 → 자동 기록 → 공유 대시보드 확인')+
+    guidedTextarea('constraints','기술·일정·예산·운영 제약','반드시 지켜야 하는 조건을 기술/일정/예산/보안/법규 관점에서 적으세요.','예: 3개월 내 완료, 기존 장비 유지, 외부 반출 금지, 예산 500만원 이내')+
+    guidedTextarea('schedule','일정 / 마일스톤 조건','언제까지 어떤 중간 결과가 필요한지 적으세요.','예: 1개월 기획 → 2개월 구현 → 3개월 검증/인수')+
+    guidedTextarea('team','팀 / 역할','기획·실행·검증·승인 역할을 적으세요.','예: PM 1, 실무 2, 구현 2, 검증 1, 승인 1')+
+    guidedTextarea('risks','리스크 / 가정','실패 가능성이 큰 조건이나 아직 확인되지 않은 사항을 적으세요.','예: 기존 데이터 품질 미확인, 현장 장비 규격 확인 필요')+
+    guidedTextarea('description','추가 설명 / 참고','기존 자산, 참고자료, 용어, 이미 정해진 결정사항 등을 적으세요.','예: 기존 산출물 재사용, 고객 데이터 외부 AI 전송 금지')+
+    `<div class="intake-preview-box"><button type="button" class="ghost-btn" id="previewIntakeBtn">작성 품질 점검</button><div id="intakePreviewResult" class="muted">프로젝트 생성 전에 입력 품질을 점검할 수 있습니다.</div></div>`;
+  openModal('새 프로젝트 시작',html,async fd=>{
     const p=await api('/api/projects',{method:'POST',body:JSON.stringify(Object.fromEntries(fd))});
     state.projectId=p.id; state.selectedDocumentId=null; await loadProjects(); connectWs(); state.view='documents'; document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view==='documents')); $('#pageTitle').textContent=titles.documents;
+    const q=p.intake_quality; if(q) toast(`프로젝트 생성 · 초기 정의 품질 ${q.score}점`);
   });
+  const btn=$('#previewIntakeBtn');
+  if(btn) btn.onclick=async()=>{
+    try{
+      const form=$('#modalForm'); const data=Object.fromEntries(new FormData(form));
+      const result=await api('/api/project-intake/preview',{method:'POST',body:JSON.stringify(data)});
+      const q=result.quality; const box=$('#intakePreviewResult');
+      const level={excellent:'매우 좋음',good:'좋음',needs_detail:'보완 권장',insufficient:'정보 부족'}[q.level]||q.level;
+      box.innerHTML=`<div class="quality-score"><strong>${q.score}점 · ${esc(level)}</strong> · ${esc(q.project_type_label)}</div>`+
+        (q.feedback.length?`<ul>${q.feedback.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<div>핵심 입력이 충분합니다. 생성 후 세부 문서를 팀과 보완하세요.</div>')+
+        `<div class="type-questions"><strong>이 유형에서 추가로 확인할 질문</strong><ul>${q.type_questions.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
+    }catch(err){ toast(err.message); }
+  };
 }
+
 async function downloadFile(url, filename){
   const headers={}; if(state.accessKey) headers['X-Access-Key']=state.accessKey;
   const r=await fetch(url,{headers}); if(!r.ok) throw new Error('파일 생성 실패');
