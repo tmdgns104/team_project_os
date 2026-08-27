@@ -49,3 +49,5 @@ jobs:
           git add app/main.py app/static/app.js local_bridge/project_cli.py tests/test_live_design.py tools/simulate_live_design.py .github/workflows/ci.yml README.md docs/DESIGN_SESSION.md docs/LIVE_DRAFT.md
           git commit -m 'add live AI design draft synchronization V0.10 [skip ci]'
           git push
+
+# retry after generated-source escaping fix
