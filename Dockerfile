@@ -6,4 +6,4 @@ COPY app ./app
 ENV PROJECT_OS_DB=/data/project_os.db
 VOLUME ["/data"]
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "app.main_v014:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
