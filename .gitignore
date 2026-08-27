@@ -4,3 +4,5 @@ __pycache__/
 project_os.db
 .env
 .pytest_cache/
+
+.team_project_os_tmp/

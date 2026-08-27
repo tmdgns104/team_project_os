@@ -1,4 +1,4 @@
-# Team Project OS V0.2
+# Team Project OS V0.7
 
 사람과 각자의 생성형 AI가 **같은 프로젝트 상태를 공유하면서 일하기 위한 팀 협업 프로그램**입니다.
 
@@ -411,3 +411,29 @@ AI Project Assistant 대화에서 **System Process / Architecture / Data Flow**�
 ### Project Delete
 
 상단 `프로젝트 삭제` 버튼으로 현재 프로젝트를 영구 삭제할 수 있습니다. 실수를 막기 위해 프로젝트 이름을 정확히 다시 입력하고 마지막 확인을 거쳐야 합니다. 삭제 시 SQLite foreign-key cascade에 따라 해당 프로젝트의 문서/revision/comment, Requirement/Task, Canvas node/edge, Traceability, Idea/Decision, Project Brief, Conversation/AI Job 등이 함께 제거됩니다.
+
+
+---
+
+## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성
+
+V0.7부터 Local AI 실행은 Provider별 Adapter로 분리합니다. 긴 프로젝트 Prompt 전체를 Windows 명령줄 인자로 직접 넣지 않습니다.
+
+| Provider | 긴 Prompt 전달 방식 | 기본 명령 |
+|---|---|---|
+| Codex | stdin | `codex exec --skip-git-repo-check -` |
+| Claude Code | stdin + 짧은 `-p` 지시 | `claude -p ... --output-format text` |
+| OpenCode | 임시 UTF-8 prompt 파일 + 짧은 run 지시 | `opencode run ...` |
+| Antigravity CLI | 임시 UTF-8 prompt 파일 + headless print | `agy -p ... --output-format text` |
+
+CMD에서 웹을 거치지 않고 AI와 바로 프로젝트를 시작할 수 있습니다.
+
+```bat
+python project_os.py doctor
+python project_os.py server
+python project_os.py create --provider codex --server http://localhost:8000 --member "승훈"
+```
+
+대화 중 `/status`, `/apply`, `/quit`을 사용할 수 있습니다. `--provider`를 `claude`, `opencode`, `antigravity`로 바꾸면 같은 인터페이스를 사용합니다.
+
+CI는 Ubuntu와 Windows에서 가짜 Provider 실행 파일을 실제 subprocess로 실행해 한글/공백/여러 줄 Prompt 보존, Windows `.cmd` wrapper, stdout/stderr 분리, 구조화 JSON round-trip, CMD 프로젝트 생성 흐름을 검증합니다.

@@ -26,7 +26,7 @@ ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
 SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.6.0")
+app = FastAPI(title="Team Project OS", version="0.7.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
@@ -705,7 +705,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.6.0"}
+    return {"status": "ok", "version": "0.7.0"}
 
 
 @app.get("/api/project-intake/meta")
