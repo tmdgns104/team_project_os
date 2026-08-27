@@ -17,7 +17,7 @@ WELCOME = (
     "AI Design Session을 시작합니다. 아직 Project OS 프로젝트는 생성되지 않습니다.\n"
     "막연한 아이디어부터 AI와 충분히 대화해서 구체화하세요.\n"
     "모르겠는 세부사항은 '알아서 임시로 정해줘'라고 하면 Autofill Mode로 채울 수 있습니다.\n"
-    "명령: /status, /autofill on|off, /preview, /apply, /quit"
+    "명령: /status, /autofill on|off, /preview, /apply, /discard, /quit"
 )
 
 SESSION_ROOT = Path.home() / ".team_project_os" / "design_sessions"
@@ -89,9 +89,124 @@ CONVERSATION RULES
 - Do not create or modify Project OS state yet. The project will only be materialized after /apply outside this AI turn.
 - Continue the discussion from the full transcript below. Answer the latest USER turn.
 
+LIVE DRAFT CONTRACT
+After your normal Korean conversational answer, append exactly one machine-readable block:
+<PROJECT_OS_DELTA>{{"project_updates":{{}},"requirements":[],"decisions":[],"document_updates":[],"design_updates":[],"pending":[]}}</PROJECT_OS_DELTA>
+Rules for this block:
+- Keep it compact. It is hidden from the user and synchronized to the web Live Draft.
+- Include only meaningful structured facts or decisions that became clearer in this turn.
+- project_updates may include only fields actually established or safely provisional under Autofill Mode.
+- A USER-confirmed choice uses decision status "accepted".
+- An AI-selected reversible default under Autofill Mode uses decision status "provisional".
+- Never mark an AI suggestion as accepted unless the USER explicitly accepted it.
+- requirements should contain stable ref/title/detail/status values when a requirement became clear.
+- If a process/architecture/dataflow view meaningfully changes, include the COMPLETE current graph for that view in design_updates, not just the new node.
+- Do not emit full documents unless a document body was explicitly drafted. The server will progressively regenerate core draft documents from the structured state.
+- If nothing structured changed, emit an empty object inside the marker.
+- Never mention this marker in the conversational answer.
+
 TRANSCRIPT
 {transcript}
 """
+
+
+def blank_live_state() -> dict:
+    return {
+        "project_updates": {},
+        "requirements": [],
+        "decisions": [],
+        "document_updates": [],
+        "design_updates": [],
+        "pending": [],
+    }
+
+
+def extract_live_delta(output: str) -> tuple[str, dict]:
+    text = str(output or "")
+    start = text.rfind("<PROJECT_OS_DELTA>")
+    end = text.rfind("</PROJECT_OS_DELTA>")
+    if start < 0 or end < start:
+        return text.strip(), {}
+    raw = text[start + len("<PROJECT_OS_DELTA>"):end].strip()
+    visible = (text[:start] + text[end + len("</PROJECT_OS_DELTA>"):]).strip()
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        parsed = {}
+    return visible, parsed if isinstance(parsed, dict) else {}
+
+
+def _merge_by_key(existing: list[dict], incoming: list[dict], key_name: str) -> list[dict]:
+    ordered: list[dict] = [dict(item) for item in existing]
+    positions = {str(item.get(key_name) or "").strip().lower(): idx for idx, item in enumerate(ordered) if str(item.get(key_name) or "").strip()}
+    for raw in incoming or []:
+        item = dict(raw)
+        key = str(item.get(key_name) or "").strip().lower()
+        if not key:
+            continue
+        if key in positions:
+            ordered[positions[key]] = item
+        else:
+            positions[key] = len(ordered)
+            ordered.append(item)
+    return ordered
+
+
+def merge_live_state(state: dict, delta: dict) -> dict:
+    merged = {
+        "project_updates": dict(state.get("project_updates") or {}),
+        "requirements": list(state.get("requirements") or []),
+        "decisions": list(state.get("decisions") or []),
+        "document_updates": list(state.get("document_updates") or []),
+        "design_updates": list(state.get("design_updates") or []),
+        "pending": list(state.get("pending") or []),
+    }
+    merged["project_updates"].update({k: v for k, v in (delta.get("project_updates") or {}).items() if str(v or "").strip()})
+    merged["requirements"] = _merge_by_key(merged["requirements"], delta.get("requirements") or [], "ref")
+    merged["decisions"] = _merge_by_key(merged["decisions"], delta.get("decisions") or [], "title")
+    merged["document_updates"] = _merge_by_key(merged["document_updates"], delta.get("document_updates") or [], "doc_type")
+    merged["design_updates"] = _merge_by_key(merged["design_updates"], delta.get("design_updates") or [], "view")
+    seen = {str(x).strip() for x in merged["pending"] if str(x).strip()}
+    for item in delta.get("pending") or []:
+        value = str(item).strip()
+        if value and value not in seen:
+            seen.add(value)
+            merged["pending"].append(value)
+    return merged
+
+
+def create_live_draft(server: str, access_key: str, member: str, provider: str) -> dict:
+    return http_json("POST", f"{server.rstrip('/')}/api/design-drafts", {
+        "member_name": member,
+        "provider": provider,
+        "name_hint": "AI Design Draft",
+    }, access_key)
+
+
+def sync_live_draft(server: str, access_key: str, project_id: int, member: str, state: dict) -> dict:
+    return http_json("PUT", f"{server.rstrip('/')}/api/design-drafts/{project_id}/sync", {
+        "member_name": member,
+        "state": state,
+    }, access_key)
+
+
+def promote_live_draft(server: str, access_key: str, project_id: int, member: str, state: dict) -> dict:
+    result = http_json("POST", f"{server.rstrip('/')}/api/design-drafts/{project_id}/promote", {
+        "member_name": member,
+        "state": state,
+    }, access_key)
+    return result["project"]
+
+
+def final_state_from_distillation(brief: dict, pending: dict) -> dict:
+    return {
+        "project_updates": dict(brief),
+        "requirements": list(pending.get("requirements") or []),
+        "decisions": list(pending.get("decisions") or []),
+        "document_updates": list(pending.get("document_updates") or []),
+        "design_updates": list(pending.get("design_updates") or []),
+        "pending": list(pending.get("pending") or []),
+    }
 
 
 def build_distiller_prompt(messages: list[dict], autofill_mode: bool = False) -> str:
@@ -310,19 +425,21 @@ def _session_file(args) -> Path:
     return SESSION_ROOT / f"design-{stamp}-{args.provider}.json"
 
 
-def save_session(path: Path, *, provider: str, member: str, messages: list[dict], applied_project: dict | None = None, autofill_mode: bool = False) -> None:
+def save_session(path: Path, *, provider: str, member: str, messages: list[dict], applied_project: dict | None = None, autofill_mode: bool = False, draft_project: dict | None = None, live_state: dict | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "provider": provider,
         "member": member,
         "messages": messages,
         "applied_project": applied_project,
+        "draft_project": draft_project,
+        "live_state": live_state or blank_live_state(),
         "autofill_mode": autofill_mode,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def print_session_status(path: Path, provider: str, messages: list[dict], autofill_mode: bool = False) -> None:
+def print_session_status(path: Path, provider: str, messages: list[dict], autofill_mode: bool = False, draft_project: dict | None = None) -> None:
     user_turns = sum(1 for m in messages if m.get("role") == "user")
     assistant_turns = sum(1 for m in messages if m.get("role") == "assistant")
     print("\nDesign Session: 프로젝트 미생성 상태")
@@ -330,7 +447,12 @@ def print_session_status(path: Path, provider: str, messages: list[dict], autofi
     print(f"대화: 사용자 {user_turns}턴 / AI {assistant_turns}턴")
     print(f"세션 저장: {path}")
     print(f"Autofill Mode: {'ON - 모르는 저위험 세부사항은 AI 임시 결정' if autofill_mode else 'OFF'}")
-    print("/preview 또는 /apply 시점에만 전체 대화를 프로젝트 구조로 변환합니다.")
+    if draft_project:
+        print(f"Live Draft: ID={draft_project.get('id')} · 웹에서 실시간 확인 가능")
+        print("의미 있는 결정이 생긴 턴마다 Documents / Requirements / Decisions / Canvas가 자동 갱신됩니다.")
+    else:
+        print("Live Draft: OFF 또는 서버 연결 실패")
+    print("/preview는 전체 구조 확인, /apply는 Live Draft를 정식 프로젝트로 승격합니다.")
 
 
 def interactive_design(args) -> int:
@@ -343,9 +465,19 @@ def interactive_design(args) -> int:
     messages: list[dict] = []
     preview_cache: tuple[int, dict, dict] | None = None
     autofill_mode = bool(getattr(args, "autofill", False))
+    live_state = blank_live_state()
+    draft_project: dict | None = None
+    if not bool(getattr(args, "no_live", False)):
+        try:
+            draft_project = create_live_draft(args.server, args.access_key, args.member, provider)
+        except Exception as exc:
+            print(f"Live Draft 연결 실패: {exc}")
+            print("대화는 계속할 수 있지만 웹 실시간 시각화는 비활성화됩니다.")
 
     print(WELCOME)
     print(f"AI: {provider} / 세션: {session_file}")
+    if draft_project:
+        print(f"Live Draft: ID={draft_project['id']} · {args.server.rstrip('/')} 에서 실시간 확인")
     if autofill_mode:
         print("Autofill Mode: ON (AI 임시 결정 허용)")
     queued = args.initial or None
@@ -357,7 +489,7 @@ def interactive_design(args) -> int:
             try:
                 user_text = input("\n나> ").strip()
             except (EOFError, KeyboardInterrupt):
-                save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode)
+                save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode, draft_project=draft_project, live_state=live_state)
                 print("\n세션을 저장하고 종료합니다.")
                 return 0
         if not user_text:
@@ -365,11 +497,23 @@ def interactive_design(args) -> int:
 
         command = user_text.lower()
         if command in {"/quit", "/exit"}:
-            save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode)
+            save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode, draft_project=draft_project, live_state=live_state)
             print(f"세션 저장: {session_file}")
             return 0
         if command == "/status":
-            print_session_status(session_file, provider, messages, autofill_mode)
+            print_session_status(session_file, provider, messages, autofill_mode, draft_project)
+            continue
+        if command == "/discard":
+            if not draft_project:
+                print("삭제할 Live Draft가 없습니다.")
+                continue
+            try:
+                http_json("DELETE", f"{args.server.rstrip('/')}/api/design-drafts/{draft_project['id']}", None, args.access_key)
+                print(f"Live Draft #{draft_project['id']} 삭제 완료")
+                draft_project = None
+                live_state = blank_live_state()
+            except Exception as exc:
+                print(f"Live Draft 삭제 실패: {exc}")
             continue
         if command.startswith("/autofill"):
             parts = command.split()
@@ -411,7 +555,12 @@ def interactive_design(args) -> int:
                 continue
 
             try:
-                project = apply_to_server(args.server, args.access_key, args.member, brief, pending)
+                final_state = final_state_from_distillation(brief, pending)
+                if draft_project:
+                    project = promote_live_draft(args.server, args.access_key, draft_project["id"], args.member, final_state)
+                    live_state = final_state
+                else:
+                    project = apply_to_server(args.server, args.access_key, args.member, brief, pending)
             except Exception as exc:
                 print(f"프로젝트 생성 실패: {exc}")
                 continue
@@ -422,6 +571,8 @@ def interactive_design(args) -> int:
                 messages=messages,
                 applied_project=project,
                 autofill_mode=autofill_mode,
+                draft_project=None,
+                live_state=live_state,
             )
             print(f"\n프로젝트 생성 완료: ID={project['id']} / {project['name']}")
             print(f"브라우저: {args.server.rstrip('/')}")
@@ -451,14 +602,24 @@ def interactive_design(args) -> int:
             print((result.stderr or result.stdout or "").strip())
             continue
 
-        answer = result.stdout.strip()
+        answer, live_delta = extract_live_delta(result.stdout)
         if not answer:
             messages.pop()
             print("\nAI 응답이 비어 있습니다.")
             continue
         messages.append({"role": "assistant", "content": answer})
-        save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode)
+        if live_delta:
+            live_state = merge_live_state(live_state, live_delta)
+            if draft_project:
+                try:
+                    synced = sync_live_draft(args.server, args.access_key, draft_project["id"], args.member, live_state)
+                    draft_project = synced.get("project") or draft_project
+                    print(f"\n[Live Draft] 웹 자동 업데이트 · Project #{draft_project['id']}")
+                except Exception as exc:
+                    print(f"\n[Live Draft] 동기화 실패: {exc}")
+        save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode, draft_project=draft_project, live_state=live_state)
         print(f"\n{provider}> {answer}")
+
 
 
 interactive_create = interactive_design
@@ -474,6 +635,7 @@ def _add_design_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--initial", default="", help="첫 아이디어를 바로 전달")
     parser.add_argument("--session-file", default="", help="Design Session 저장 파일 경로")
     parser.add_argument("--autofill", action="store_true", help="모르는 저위험 세부사항을 AI가 PROVISIONAL로 임시 결정")
+    parser.add_argument("--no-live", action="store_true", help="대화 중 웹 Live Draft 자동 동기화 비활성화")
 
 
 def main(argv=None) -> int:

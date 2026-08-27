@@ -1,8 +1,30 @@
-# Team Project OS V0.9
+# Team Project OS V0.10
 
 사람이 처음부터 완벽한 기획서를 작성하지 않아도, **자기 생성형 AI와 충분히 대화해 프로젝트를 구체화한 뒤 `/apply`로 Project OS에 정식 프로젝트를 만드는 팀 협업 프로그램**입니다.
 
 AI는 프로젝트의 필수 의존성이 아니라 선택 가능한 Worker Provider입니다. AI를 사용하지 않는 팀원도 같은 웹 UI와 프로젝트 상태를 사용할 수 있고, AI를 사용하는 팀원은 자기 PC의 **Codex / Claude Code / OpenCode / Antigravity CLI**를 연결합니다.
+
+## V0.10 Live Design Draft
+
+AI Design Session을 오래 진행해도 웹이 빈 상태로 기다리지 않습니다. 세션 시작 시 `lifecycle=draft`인 Live Draft가 생성되고, **같은 AI 응답 안의 작은 구조화 delta**를 이용해 의미 있는 결정이 생긴 턴마다 웹을 즉시 갱신합니다. 추가 AI 호출을 만들지 않으므로 기존 대화 속도를 최대한 유지합니다.
+
+```text
+AI와 대화
+  ↓
+같은 응답의 숨은 PROJECT_OS_DELTA
+  ↓
+Live Draft Sync
+  ↓
+WebSocket
+  ↓
+Documents / Requirements / Decisions / Canvas 즉시 갱신
+  ↓
+/apply
+  ↓
+같은 Draft를 정식 active 프로젝트로 승격
+```
+
+웹의 프로젝트 선택 목록에는 `🟡 설계중`으로 표시되며 `/apply` 전까지 정식 확정본이 아닙니다. `/discard`로 Live Draft만 삭제할 수 있고, `--no-live`로 이전처럼 웹 실시간 동기화를 끌 수도 있습니다.
 
 ## 핵심 흐름
 
@@ -151,7 +173,7 @@ Design Session은 기본적으로 다음 위치에 저장됩니다.
 
 # Decision 상태
 
-Team Project OS V0.9에서는 AI가 대신 고른 값과 사람이 직접 확정한 값을 구분합니다.
+Team Project OS V0.10에서는 AI가 대신 고른 값과 사람이 직접 확정한 값을 구분합니다.
 
 | 상태 | 의미 |
 |---|---|
@@ -351,6 +373,12 @@ Provisional Autofill 실제 생성 시뮬레이터:
 
 ```bat
 python tools\simulate_autofill_project.py
+```
+
+Live Design Draft 실시간 동기화 시뮬레이터:
+
+```bat
+python tools\simulate_live_design.py
 ```
 
 CI는 **Windows와 Ubuntu**에서 다음을 검사합니다.

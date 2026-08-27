@@ -1,12 +1,14 @@
 # AI Design Session
 
-Team Project OS V0.9의 권장 프로젝트 시작 방식은 **막연한 아이디어 → AI와 자유 대화 → 필요하면 Autofill → `/preview` → `/apply` → 정식 프로젝트 생성**입니다.
+Team Project OS V0.10의 권장 프로젝트 시작 방식은 **막연한 아이디어 → AI와 자유 대화 → 필요하면 Autofill → `/preview` → `/apply` → 정식 프로젝트 생성**입니다.
 
 ```bat
 python project_os.py design --provider codex --member "내 이름"
 ```
 
-대화 중에는 Project OS의 프로젝트/문서/Canvas를 변경하지 않습니다. AI도 이 단계에서는 JSON을 만들지 않고 일반 대화로 문제, 목표, 사용자, 범위, 기능, Process, Architecture, Data Flow, 일정, 리스크, 테스트 방법을 함께 구체화합니다.
+대화 중에는 정식 Source of Truth를 확정 변경하지 않습니다. 대신 V0.10에서는 `lifecycle=draft`인 **Live Draft**가 만들어지고, 의미 있는 결정이 생긴 턴마다 Documents / Requirements / Decisions / Canvas가 웹에서 실시간 갱신됩니다. `/apply` 시 같은 Draft를 정식 프로젝트로 승격합니다. 자세한 내용은 `LIVE_DRAFT.md`를 참고하세요.
+
+AI는 이 단계에서 일반 대화로 문제, 목표, 사용자, 범위, 기능, Process, Architecture, Data Flow, 일정, 리스크, 테스트 방법을 함께 구체화합니다. AI도 이 단계에서는 JSON을 만들지 않고 일반 대화로 문제, 목표, 사용자, 범위, 기능, Process, Architecture, Data Flow, 일정, 리스크, 테스트 방법을 함께 구체화합니다.
 
 ## 기본 예시
 

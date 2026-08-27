@@ -18,7 +18,7 @@ const api = async (url, opts={}) => {
 };
 function toast(msg){ const el=$('#toast'); el.textContent=msg; el.classList.remove('hidden'); setTimeout(()=>el.classList.add('hidden'),2400); }
 function statusChip(status){
-  const map={done:['완료','good'],in_progress:['진행중','ai'],review:['검토','warn'],todo:['예정',''],blocked:['차단','danger'],defined:['정의됨','good'],accepted:['승인','good'],open:['Open',''],discussing:['논의중','warn'],queued:['대기','warn'],claimed:['실행중','ai'],completed:['완료','good'],failed:['실패','danger'],draft:['초안',''],approved:['승인됨','good'],complete:['완료','good']};
+  const map={done:['완료','good'],in_progress:['진행중','ai'],review:['검토','warn'],todo:['예정',''],blocked:['차단','danger'],defined:['정의됨','good'],accepted:['승인','good'],provisional:['AI 임시','warn'],open:['Open',''],discussing:['논의중','warn'],queued:['대기','warn'],claimed:['실행중','ai'],completed:['완료','good'],failed:['실패','danger'],draft:['초안',''],approved:['승인됨','good'],complete:['완료','good']};
   const [t,c]=map[status]||[status,'']; return `<span class="chip ${c}">${esc(t)}</span>`;
 }
 async function init(){
@@ -42,7 +42,7 @@ function bindNav(){
 async function loadProjects(){
   state.projects=await api('/api/projects');
   const select=$('#projectSelect');
-  select.innerHTML=state.projects.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  select.innerHTML=state.projects.map(p=>`<option value="${p.id}">${p.lifecycle==='draft'?'🟡 설계중 · ':''}${esc(p.name)}</option>`).join('');
   if(state.projectId && !state.projects.some(p=>p.id===state.projectId)) state.projectId=null;
   if(!state.projectId && state.projects[0]) state.projectId=state.projects[0].id;
   select.value=state.projectId||'';
@@ -57,7 +57,7 @@ function connectWs(){
   const key=encodeURIComponent(state.accessKey||'');
   state.ws=new WebSocket(`${proto}://${location.host}/ws/projects/${state.projectId}?key=${key}`);
   state.ws.onopen=()=>{ $('#liveText').textContent='실시간 공유 연결됨'; };
-  state.ws.onmessage=()=>loadSnapshot().catch(()=>{});
+  state.ws.onmessage=e=>{ let msg={}; try{msg=JSON.parse(e.data||'{}')}catch(_e){}; if(msg.scope==='live_draft') $('#liveText').textContent='Live Draft 자동 반영됨'; if(msg.scope==='live_draft_promoted') $('#liveText').textContent='정식 프로젝트로 승격됨'; loadSnapshot().catch(()=>{}); };
   state.ws.onclose=()=>{ $('#liveText').textContent='연결 끊김 · 새로고침 필요'; };
 }
 function setAccessKey(){
@@ -67,7 +67,8 @@ function setAccessKey(){
 function render(){
   if(!state.snapshot){ $('#content').innerHTML='<div class="panel onboarding"><h2>새 프로젝트를 시작하세요</h2><p class="muted">AI가 있으면 대화만으로 시작하고, 없으면 직접 입력할 수 있습니다.</p><div class="onboarding-actions"><button class="primary-btn" data-action="start-ai-project">✦ AI와 대화하며 시작</button><button class="ghost-btn" data-action="new-project">직접 입력해서 시작</button></div></div>'; bindViewActions(); return; }
   const fn={overview:renderOverview,definition:renderDefinition,assistant:renderAssistant,documents:renderDocuments,traceability:renderTraceability,progress:renderProgress,process:()=>renderDiagram('process'),architecture:()=>renderDiagram('architecture'),dataflow:()=>renderDiagram('dataflow'),ideas:renderIdeas,team:renderTeam}[state.view];
-  $('#content').innerHTML=fn(); bindViewActions();
+  const draftBanner=state.snapshot.project.lifecycle==='draft'?`<div class="notice" style="margin-bottom:16px"><strong>🟡 AI Design Live Draft</strong> · AI와 대화 중 결정되는 내용이 실시간 반영됩니다. <strong>/apply 전에는 정식 확정 프로젝트가 아닙니다.</strong><br><small>Documents · Requirements · Decisions · Process/Architecture/Data Flow가 WebSocket으로 자동 갱신됩니다.</small></div>`:'';
+  $('#content').innerHTML=draftBanner+fn(); bindViewActions();
 }
 function renderOverview(){
   const s=state.snapshot, st=s.stats;

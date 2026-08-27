@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.project_intake import build_initial_documents, evaluate_intake, intake_metadata
-from app.conversation import build_interviewer_prompt, combine_proposals, merge_project_brief, normalize_ai_result
+from app.conversation import PROJECT_FIELDS, build_interviewer_prompt, combine_proposals, merge_project_brief, normalize_ai_result
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.getenv("PROJECT_OS_DB", BASE_DIR / "project_os.db"))
@@ -26,7 +26,7 @@ ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
 SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.7.0")
+app = FastAPI(title="Team Project OS", version="0.10.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
@@ -232,6 +232,17 @@ class ConversationApply(BaseModel):
     apply_documents: bool = True
 
 
+class DesignDraftCreate(BaseModel):
+    member_name: str = Field(default="CMD User", max_length=120)
+    provider: str = Field(default="codex", max_length=40)
+    name_hint: str = Field(default="AI Design Draft", max_length=120)
+
+
+class DesignDraftSync(BaseModel):
+    member_name: str = Field(default="CMD User", max_length=120)
+    state: dict[str, Any] = Field(default_factory=dict)
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.connections: dict[int, set[WebSocket]] = {}
@@ -267,6 +278,7 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 goal TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
+                lifecycle TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS requirements (
@@ -450,6 +462,9 @@ def init_db() -> None:
             );
             """
         )
+        project_columns = {row["name"] for row in conn.execute("PRAGMA table_info(projects)")}
+        if "lifecycle" not in project_columns:
+            conn.execute("ALTER TABLE projects ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
         count = conn.execute("SELECT COUNT(*) AS c FROM projects").fetchone()["c"]
         if count == 0 and SEED_DEMO:
             seed_demo(conn)
@@ -550,6 +565,154 @@ def apply_project_brief_to_documents(conn: sqlite3.Connection, project_id: int, 
             "UPDATE documents SET content=?,updated_by='Project Setup',updated_at=? WHERE project_id=? AND doc_type=?",
             (content, now(), project_id, doc_type),
         )
+
+
+def _live_graph_markdown(title: str, design: dict[str, Any] | None) -> str:
+    lines = [f"# {title}", "", "> AI Design Session Live Draft. `/apply` 전까지 정식 확정본이 아닙니다.", ""]
+    if not design:
+        lines.append("아직 대화에서 구조가 정리되지 않았습니다.")
+        return "\n".join(lines) + "\n"
+    nodes = design.get("nodes", []) or []
+    edges = design.get("edges", []) or []
+    if nodes:
+        lines.extend(["## 구성", ""])
+        for node in nodes:
+            detail = str(node.get("detail") or "").strip()
+            suffix = f" — {detail}" if detail else ""
+            lines.append(f"- **{node.get('label', '')}** ({node.get('kind', 'component')}){suffix}")
+    if edges:
+        lines.extend(["", "## 연결", ""])
+        labels = {str(n.get("key")): str(n.get("label")) for n in nodes}
+        for edge in edges:
+            src = labels.get(str(edge.get("source")), str(edge.get("source") or ""))
+            dst = labels.get(str(edge.get("target")), str(edge.get("target") or ""))
+            label = str(edge.get("label") or "").strip()
+            middle = f" --{label}--> " if label else " --> "
+            lines.append(f"- {src}{middle}{dst}")
+    return "\n".join(lines) + "\n"
+
+
+def build_live_draft_documents(brief: dict[str, Any], state: dict[str, Any]) -> dict[str, str]:
+    generated = build_initial_documents(brief)
+    requirements = state.get("requirements", []) or []
+    decisions = state.get("decisions", []) or []
+    pending_items = state.get("pending", []) or []
+
+    if requirements:
+        lines = ["# 요구사항 정의서", "", "> AI Design Session Live Draft", "", "| ID | 요구사항 | 상세 | 상태 |", "|---|---|---|---|"]
+        for item in requirements:
+            lines.append(f"| {item.get('ref','')} | {str(item.get('title','')).replace('|','/')} | {str(item.get('detail','')).replace('|','/')} | {item.get('status','defined')} |")
+        generated["requirements"] = "\n".join(lines) + "\n"
+
+    if decisions or pending_items:
+        plan = generated.get("plan", "# 계획서\n")
+        plan += "\n## Live Decisions\n\n"
+        if decisions:
+            for item in decisions:
+                status = str(item.get("status") or "accepted")
+                plan += f"- [{status}] **{item.get('title','')}** — {item.get('body','')}\n"
+        else:
+            plan += "- 아직 결정 없음\n"
+        if pending_items:
+            plan += "\n## Pending / TBD\n\n"
+            for item in pending_items:
+                plan += f"- {item}\n"
+        generated["plan"] = plan
+
+    designs = {str(d.get("view")): d for d in (state.get("design_updates", []) or []) if d.get("view")}
+    if "architecture" in designs:
+        generated["system_architecture"] = _live_graph_markdown("시스템 구조도", designs["architecture"])
+    if "dataflow" in designs:
+        generated["data_flow"] = _live_graph_markdown("데이터 플로우", designs["dataflow"])
+    if "process" in designs:
+        process = _live_graph_markdown("System Process", designs["process"])
+        generated["function_definition"] = "# 기능 정의서\n\n" + process.split("\n", 1)[1]
+
+    for item in state.get("document_updates", []) or []:
+        doc_type = str(item.get("doc_type") or "")
+        content = str(item.get("content") or "")
+        if doc_type and content:
+            generated[doc_type] = content
+    return generated
+
+
+def apply_live_draft_state(conn: sqlite3.Connection, project_id: int, member_name: str, state: dict[str, Any], *, lifecycle: str = "draft") -> dict[str, Any]:
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if project["lifecycle"] != "draft" and lifecycle == "draft":
+        raise HTTPException(409, "Project is not a live design draft")
+
+    updates = {k: v for k, v in (state.get("project_updates") or {}).items() if k in PROJECT_FIELDS and str(v or "").strip()}
+    brief = merge_project_brief(ensure_project_brief(conn, project_id), updates)
+    if not str(brief.get("name") or "").strip():
+        brief["name"] = project["name"] or "AI Design Draft"
+    if not str(brief.get("goal") or "").strip():
+        brief["goal"] = "AI와 프로젝트 설계 중"
+    save_project_brief(conn, project_id, brief)
+    conn.execute(
+        "UPDATE projects SET name=?,goal=?,description=?,lifecycle=? WHERE id=?",
+        (brief["name"], brief["goal"], brief.get("description", ""), lifecycle, project_id),
+    )
+
+    conn.execute("DELETE FROM requirements WHERE project_id=?", (project_id,))
+    for item in state.get("requirements", []) or []:
+        title = f"{item.get('ref','')} {item.get('title','')}".strip()
+        if title:
+            conn.execute(
+                "INSERT INTO requirements(project_id,title,detail,status,created_at) VALUES(?,?,?,?,?)",
+                (project_id, title, item.get("detail", ""), item.get("status", "defined"), now()),
+            )
+
+    conn.execute("DELETE FROM decisions WHERE project_id=?", (project_id,))
+    for item in state.get("decisions", []) or []:
+        if item.get("title"):
+            conn.execute(
+                "INSERT INTO decisions(project_id,title,body,author,status,created_at) VALUES(?,?,?,?,?,?)",
+                (project_id, item["title"], item.get("body", ""), f"Live Design / {member_name}", item.get("status", "accepted"), now()),
+            )
+
+    live_docs = build_live_draft_documents(brief, state)
+    for doc_type, content in live_docs.items():
+        conn.execute(
+            "UPDATE documents SET content=?,status='draft',updated_by=?,updated_at=? WHERE project_id=? AND doc_type=?",
+            (content, f"Live Design / {member_name}", now(), project_id, doc_type),
+        )
+
+    conn.execute("DELETE FROM edges WHERE project_id=?", (project_id,))
+    conn.execute("DELETE FROM nodes WHERE project_id=?", (project_id,))
+    for design in state.get("design_updates", []) or []:
+        view = str(design.get("view") or "")
+        if view not in {"process", "architecture", "dataflow"}:
+            continue
+        key_to_id: dict[str, int] = {}
+        for idx, node in enumerate(design.get("nodes", []) or []):
+            key = str(node.get("key") or "").strip()
+            label = str(node.get("label") or "").strip()
+            if not key or not label:
+                continue
+            cur = conn.execute(
+                "INSERT INTO nodes(project_id,view,label,kind,detail,x,y) VALUES(?,?,?,?,?,?,?)",
+                (project_id, view, label, node.get("kind") or "component", node.get("detail") or "", 80 + (idx % 4) * 220, 80 + (idx // 4) * 150),
+            )
+            key_to_id[key] = cur.lastrowid
+        for edge in design.get("edges", []) or []:
+            source = key_to_id.get(str(edge.get("source") or ""))
+            target = key_to_id.get(str(edge.get("target") or ""))
+            if source and target and source != target:
+                conn.execute(
+                    "INSERT INTO edges(project_id,view,source_id,target_id,label) VALUES(?,?,?,?,?)",
+                    (project_id, view, source, target, edge.get("label", "")),
+                )
+
+    add_activity(
+        conn,
+        project_id,
+        "live_design",
+        f"Live Draft 동기화 · 요구사항 {len(state.get('requirements', []) or [])} · 결정 {len(state.get('decisions', []) or [])} · Canvas {len(state.get('design_updates', []) or [])}",
+        member_name,
+    )
+    return rowdict(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()) or {}
 
 
 def derived_trace_links(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -705,7 +868,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.7.0"}
+    return {"status": "ok", "version": "0.10.0"}
 
 
 @app.get("/api/project-intake/meta")
@@ -1024,6 +1187,69 @@ async def apply_conversation(session_id: int, payload: ConversationApply, x_acce
         quality = evaluate_intake(ensure_project_brief(conn, pid))
     await manager.broadcast(pid, {"type": "refresh", "scope": "conversation"})
     return {"ok": True, "applied": applied, "quality": quality}
+
+
+@app.post("/api/design-drafts")
+async def create_design_draft(payload: DesignDraftCreate, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    name = payload.name_hint.strip() or "AI Design Draft"
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO projects(name,goal,description,lifecycle,created_at) VALUES(?,?,?,?,?)",
+            (name, "AI와 프로젝트 설계 중", "AI Design Session Live Draft · /apply 전 정식 확정본 아님", "draft", now()),
+        )
+        pid = cur.lastrowid
+        ensure_project_documents(conn, pid)
+        brief = ensure_project_brief(conn, pid)
+        brief["name"] = name
+        brief["goal"] = "AI와 프로젝트 설계 중"
+        brief["description"] = "AI Design Session Live Draft · /apply 전 정식 확정본 아님"
+        save_project_brief(conn, pid, brief)
+        conn.execute(
+            "INSERT INTO members(project_id,name,role,ai_provider,created_at) VALUES(?,?,?,?,?)",
+            (pid, payload.member_name, "Design Session", payload.provider, now()),
+        )
+        add_activity(conn, pid, "live_design", "AI Design Session Live Draft가 시작되었습니다.", payload.member_name)
+        project = rowdict(conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
+    return project
+
+
+@app.put("/api/design-drafts/{project_id}/sync")
+async def sync_design_draft(project_id: int, payload: DesignDraftSync, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        project = apply_live_draft_state(conn, project_id, payload.member_name, payload.state, lifecycle="draft")
+    await manager.broadcast(project_id, {"type": "refresh", "scope": "live_draft"})
+    return {"ok": True, "project": project}
+
+
+@app.post("/api/design-drafts/{project_id}/promote")
+async def promote_design_draft(project_id: int, payload: DesignDraftSync, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(404, "Project not found")
+        if project["lifecycle"] != "draft":
+            raise HTTPException(409, "Project is not a live design draft")
+        promoted = apply_live_draft_state(conn, project_id, payload.member_name, payload.state, lifecycle="active")
+        add_activity(conn, project_id, "project", "Live Draft가 정식 프로젝트로 승격되었습니다.", payload.member_name)
+    await manager.broadcast(project_id, {"type": "refresh", "scope": "live_draft_promoted"})
+    return {"ok": True, "project": promoted}
+
+
+@app.delete("/api/design-drafts/{project_id}")
+async def discard_design_draft(project_id: int, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(404, "Project not found")
+        if project["lifecycle"] != "draft":
+            raise HTTPException(409, "Only design drafts can be discarded here")
+        conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+    await manager.broadcast(project_id, {"type": "project_deleted", "project_id": project_id})
+    return {"ok": True, "deleted_project_id": project_id}
 
 
 @app.get("/api/projects", dependencies=[])
