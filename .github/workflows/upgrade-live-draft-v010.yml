@@ -42,12 +42,12 @@ jobs:
           python project_os.py create -h
       - name: JavaScript syntax
         run: node --check app/static/app.js
-      - name: Commit V0.10
+      - name: Commit V0.10 feature files
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/main.py app/static/app.js local_bridge/project_cli.py tests/test_live_design.py tools/simulate_live_design.py .github/workflows/ci.yml README.md docs/DESIGN_SESSION.md docs/LIVE_DRAFT.md
+          git add app/main.py app/static/app.js local_bridge/project_cli.py tests/test_live_design.py tools/simulate_live_design.py README.md docs/DESIGN_SESSION.md docs/LIVE_DRAFT.md
           git commit -m 'add live AI design draft synchronization V0.10 [skip ci]'
           git push
 
-# retry after live delta f-string brace fix
+# validated feature publish; ci.yml is updated separately
