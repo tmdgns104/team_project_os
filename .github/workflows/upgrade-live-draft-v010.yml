@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Make upgrade patch resilient
+        run: python scripts/fix_upgrade_v010.py
       - name: Apply V0.10 upgrade
         run: python scripts/upgrade_live_draft_v010.py
       - name: Install dependencies
