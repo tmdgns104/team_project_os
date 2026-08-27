@@ -4,8 +4,8 @@ import argparse
 import subprocess
 import sys
 
-from local_bridge.project_cli import main as project_cli_main
-from local_bridge.providers import SUPPORTED_PROVIDERS, print_doctor
+from local_bridge.project_cli_v014 import main as project_cli_main
+from local_bridge.providers_v014 import SUPPORTED_PROVIDERS, print_doctor
 
 
 def _add_design_args(parser: argparse.ArgumentParser) -> None:
@@ -18,10 +18,11 @@ def _add_design_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--initial", default="")
     parser.add_argument("--session-file", default="")
     parser.add_argument("--autofill", action="store_true")
+    parser.add_argument("--no-live", action="store_true")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Team Project OS")
+    parser = argparse.ArgumentParser(description="Team Project OS V0.14")
     sub = parser.add_subparsers(dest="sub", required=True)
 
     design = sub.add_parser("design", help="AI와 자유롭게 프로젝트를 구체화한 뒤 /apply로 생성")
@@ -41,7 +42,7 @@ def main() -> int:
         return 0
     if args.sub == "server":
         return subprocess.call([
-            sys.executable, "-m", "uvicorn", "app.main:app",
+            sys.executable, "-m", "uvicorn", "app.main_v014:app",
             "--host", args.host, "--port", args.port,
         ])
 
@@ -62,6 +63,8 @@ def main() -> int:
         cli_args += ["--session-file", args.session_file]
     if args.autofill:
         cli_args += ["--autofill"]
+    if args.no_live:
+        cli_args += ["--no-live"]
     return project_cli_main(cli_args)
 
 
