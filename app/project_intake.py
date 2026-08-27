@@ -187,110 +187,274 @@ def evaluate_intake(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_initial_documents(data: dict[str, Any]) -> dict[str, str]:
+    """Build shareable, professional-grade project document baselines.
+
+    Unknown information is shown as TBD instead of being invented. The documents are
+    intentionally structured like real delivery artifacts so that Live Design can
+    progressively replace TBD sections without changing the document shape.
+    """
     ptype = _text(data, "project_type") or "generic"
     meta = PROJECT_TYPES.get(ptype, PROJECT_TYPES["generic"])
-    def v(key: str, fallback: str = "- 작성 필요") -> str:
+
+    def v(key: str, fallback: str = "TBD · 확인 필요") -> str:
         return _text(data, key) or fallback
 
-    proposal = f"""# 기획서
+    def safe(value: str) -> str:
+        return str(value or "").replace("|", "/").replace("\n", " ").strip()
 
-## 1. 프로젝트 개요
-- 프로젝트 유형: {meta['label']}
-- 정의 초점: {meta['focus']}
+    name = v("name", "프로젝트명 TBD")
+    goal = v("goal")
+    problem = v("problem")
+    users = v("users")
+    deliverables = v("deliverables")
+    success = v("success_criteria")
+    scope = v("scope")
+    current_state = v("current_state")
+    target_state = v("target_state")
+    constraints = v("constraints")
+    schedule = v("schedule")
+    team = v("team")
+    risks = v("risks")
+    description = v("description", "추가 참고사항 없음")
 
-## 2. 배경 및 문제 정의
-{v('problem')}
+    proposal = f"""# {name} 기획서
 
-## 3. 프로젝트 목표
-{v('goal')}
+> **문서 목적** · 프로젝트 추진 배경, 목표, 범위, 성공 기준을 합의하기 위한 기준 문서  
+> **문서 상태** · Draft / Live Design  
+> **프로젝트 유형** · {meta['label']}
 
-## 4. 대상 사용자 / 이해관계자
-{v('users')}
+## Executive Summary
 
-## 5. 주요 산출물
-{v('deliverables')}
+| 항목 | 내용 |
+|---|---|
+| 프로젝트 | {safe(name)} |
+| 해결 문제 | {safe(problem)} |
+| 목표 | {safe(goal)} |
+| 주요 사용자/이해관계자 | {safe(users)} |
+| 주요 산출물 | {safe(deliverables)} |
+| 성공 기준 | {safe(success)} |
 
-## 6. 성공 기준 / KPI
-{v('success_criteria')}
+## 1. 추진 배경 및 문제 정의
+{problem}
 
-## 7. 범위 / 제외 범위
-{v('scope')}
+### 1.1 왜 지금 필요한가
+- 현재 문제로 인한 업무/품질/비용/리스크 영향을 구체화한다.
+- 정량 수치가 확인되지 않은 항목은 **TBD**로 관리한다.
 
-## 8. 현재 상태 (AS-IS)
-{v('current_state')}
+## 2. 프로젝트 목표
+{goal}
 
-## 9. 목표 상태 (TO-BE)
-{v('target_state')}
-"""
+### 2.1 성공 기준 / KPI
+{success}
 
-    plan = f"""# 계획서
-
-## 1. 추진 범위
-{v('scope')}
-
-## 2. 주요 산출물
-{v('deliverables')}
-
-## 3. 일정 / 마일스톤
-{v('schedule', '- 마일스톤 문서에서 구체화 필요')}
-
-## 4. 역할과 책임
-{v('team', '- Team & AI에서 구체화 필요')}
-
-## 5. 기술·일정·예산·운영 제약
-{v('constraints')}
-
-## 6. 리스크 / 가정
-{v('risks')}
-
-## 7. 추가 설명 / 참고
-{v('description')}
-"""
-
-    req = f"""# 요구사항 정의서
-
-> 아래 항목은 프로젝트 시작 정보에서 도출한 요구사항 작성 가이드입니다. 실제 요구사항은 팀 검토 후 REQ ID를 부여하세요.
-
-## 프로젝트 목표
-{v('goal')}
-
-## 성공 기준
-{v('success_criteria')}
-
-## 범위 경계
-{v('scope')}
-
-| ID | 요구사항 | 상세 | 우선순위 | 상태 | 검증 기준 |
-|---|---|---|---|---|---|
-| REQ-001 |  |  | High | Draft |  |
-"""
-
-    milestone = f"""# 마일스톤
-
-## 초기 일정 정보
-{v('schedule', '- 일정 미정')}
-
-| Milestone | 목표 | 완료 조건 | 목표일 | 상태 |
+| KPI | 목표값 | 측정 방법 | 측정 시점 | 상태 |
 |---|---|---|---|---|
-| M1 | 기획/요구사항 기준선 확정 | 핵심 문서 Review 이상 |  | Draft |
-| M2 | 설계 기준선 확정 | Process/Architecture/Data Flow 확정 |  | Draft |
-| M3 | 구현 및 검증 | 핵심 Task/QA 완료 |  | Draft |
+| 핵심 KPI | {safe(success)} | TBD | 검증 단계 | Draft |
+
+## 3. 대상 사용자 및 이해관계자
+{users}
+
+| 구분 | 역할/관심사 | 주요 책임 | 승인/협의 |
+|---|---|---|---|
+| 사용자/운영자 | {safe(users)} | TBD | TBD |
+
+## 4. 프로젝트 범위
+{scope}
+
+### 4.1 In Scope
+- 위 범위 정의 중 이번 V1에서 반드시 제공할 항목을 관리한다.
+
+### 4.2 Out of Scope
+- 명시되지 않은 범위는 자동으로 확정하지 않는다. 제외 범위는 팀 합의 후 기록한다.
+
+## 5. AS-IS / TO-BE
+
+| 구분 | 내용 |
+|---|---|
+| AS-IS | {safe(current_state)} |
+| TO-BE | {safe(target_state)} |
+
+## 6. 주요 산출물
+{deliverables}
+
+## 7. 제약사항 및 전제조건
+{constraints}
+
+## 8. 핵심 리스크
+{risks}
+
+| Risk | 영향 | 대응 방향 | Owner | 상태 |
+|---|---|---|---|---|
+| 초기 리스크 | {safe(risks)} | 회피/완화 방안 구체화 필요 | TBD | Open |
+
+## 9. 승인 기준
+- 목표, 범위, KPI, 주요 산출물에 이해관계자가 합의해야 한다.
+- `provisional` 결정은 정식 승인 전까지 임시안으로 취급한다.
+- 미결정 고위험 항목은 승인 없이 확정하지 않는다.
+
+## 10. 참고사항
+{description}
 """
 
-    backlog = f"""# 백로그
+    plan = f"""# {name} 프로젝트 계획서
 
-## 초기 산출물
-{v('deliverables')}
+> **문서 목적** · 프로젝트 실행 방식, 일정, 역할, 리스크 및 변경관리 기준 정의
 
-## 프로젝트 유형별 확인 질문
+## 1. 추진 전략
+
+### 1.1 목표
+{goal}
+
+### 1.2 추진 원칙
+- V1 범위를 우선 확정하고 작은 단위로 검증한다.
+- Requirement → Design → Task → QA Evidence 추적성을 유지한다.
+- AI 임시 결정은 `provisional`, 사람 승인 결정은 `accepted`로 구분한다.
+
+## 2. 범위 및 산출물
+
+### 2.1 범위
+{scope}
+
+### 2.2 산출물
+{deliverables}
+
+## 3. 일정 및 마일스톤
+{schedule}
+
+| Milestone | 주요 목표 | 핵심 산출물 | Entry Criteria | Exit Criteria | 목표일 | 상태 |
+|---|---|---|---|---|---|---|
+| M1 · Definition Baseline | 목표/요구사항 기준선 | 기획서, 요구사항서 | 아이디어 정의 | 핵심 요구사항 Review | TBD | Draft |
+| M2 · Design Baseline | 설계 기준선 | Process, Architecture, Data Flow | 요구사항 Review | 주요 설계 Review | TBD | Draft |
+| M3 · Implementation | 기능 구현 | 코드, 구성, Task Evidence | 설계 기준선 | 핵심 기능 구현 | TBD | Draft |
+| M4 · Verification | 검증 및 인수 | QA 결과, 인수 기준 | 구현 완료 | Exit Criteria 충족 | TBD | Draft |
+
+## 4. Work Breakdown Structure
+
+| WBS | Work Package | 주요 작업 | 산출물 | Owner | 선행조건 | 상태 |
+|---|---|---|---|---|---|---|
+| 1.0 | Definition | 목표/범위/요구사항 상세화 | 기준 문서 | TBD | - | Todo |
+| 2.0 | Design | Process/Architecture/Data Flow | 설계 산출물 | TBD | 1.0 | Todo |
+| 3.0 | Build | 기능 구현 및 통합 | 실행 가능 제품 | TBD | 2.0 | Todo |
+| 4.0 | Verify | Test/QA/Evidence | 검증 결과 | TBD | 3.0 | Todo |
+
+## 5. 역할과 책임 (R&R)
+{team}
+
+| Role | Responsibility | Accountable/Approver | 비고 |
+|---|---|---|---|
+| PM / Owner | 범위·일정·의사결정 관리 | TBD | TBD |
+| Engineering | 설계·구현·기술검증 | TBD | TBD |
+| QA / Reviewer | 요구사항 기반 검증 | TBD | TBD |
+
+## 6. 제약사항 및 의존성
+{constraints}
+
+## 7. 리스크 관리
+{risks}
+
+| ID | Risk | Probability | Impact | Mitigation | Trigger | Owner | 상태 |
+|---|---|---|---|---|---|---|---|
+| RISK-001 | {safe(risks)} | TBD | TBD | 대응안 구체화 | TBD | TBD | Open |
+
+## 8. 품질 및 검증 계획
+- 각 핵심 요구사항은 최소 1개 이상의 검증 기준/테스트와 연결한다.
+- 완료 판단은 AI 자기보고가 아니라 Test/Evidence 기준으로 수행한다.
+
+## 9. 변경관리
+- 범위/Architecture/외부 인터페이스 변경은 Decision/ADR로 기록한다.
+- 변경 시 영향받는 Requirement, Task, QA를 함께 검토한다.
+
+## 10. 커뮤니케이션 / 보고
+- 주요 Decision, Blocker, 범위 변경은 팀 공용 Project OS에 기록한다.
+- 반복 상태 갱신은 자동화하고 승인/위험 변경에 Human Gate를 둔다.
+"""
+
+    req = f"""# {name} 요구사항 정의서
+
+> **문서 목적** · 구현·검증 가능한 요구사항 기준선과 추적성 관리
+
+## 1. 요구사항 작성 원칙
+- 한 요구사항은 하나의 명확한 결과를 표현한다.
+- 모호한 표현(빠르게, 적절히, 편리하게)은 측정 가능한 기준으로 바꾼다.
+- 각 요구사항은 Acceptance Criteria와 검증 방법을 가져야 한다.
+
+## 2. 프로젝트 목표
+{goal}
+
+## 3. 범위 경계
+{scope}
+
+## 4. 요구사항 목록
+
+| ID | Type | 요구사항 | 상세 | Priority | Acceptance Criteria | Verification | 상태 |
+|---|---|---|---|---|---|---|---|
+| REQ-001 | Functional | TBD | 프로젝트 대화에서 구체화 필요 | High | TBD | Test/Review | Draft |
+
+## 5. 비기능 요구사항
+
+| ID | Category | Requirement | Target | Verification | 상태 |
+|---|---|---|---|---|---|
+| NFR-001 | Performance/Quality | {safe(success)} | {safe(success)} | Measurement/Test | Draft |
+| NFR-002 | Constraint | {safe(constraints)} | 준수 | Review/Test | Draft |
+
+## 6. Traceability Matrix
+
+| Requirement | Process/Component | Task | Test Case | Evidence | 상태 |
+|---|---|---|---|---|---|
+| REQ-001 | TBD | TBD | TBD | TBD | Draft |
+
+## 7. 미결정 / Open Items
+- 구체적 Acceptance Criteria가 없는 Requirement는 Review 전까지 Draft로 유지한다.
+- 정책·보안·법규·실제 비용/장비 관련 항목은 담당자 확인 후 확정한다.
+"""
+
+    milestone = f"""# {name} 마일스톤 관리표
+
+> **기준 일정** · {schedule}
+
+## 1. Milestone Overview
+
+| ID | Milestone | 목표 | 주요 산출물 | 완료 조건 (Exit Criteria) | 목표일 | Owner | 상태 |
+|---|---|---|---|---|---|---|---|
+| M1 | Definition Baseline | 프로젝트 정의 확정 | 기획서/요구사항서 | 핵심 목표·범위·REQ Review | TBD | TBD | Draft |
+| M2 | Design Baseline | 구현 가능한 설계 확정 | Process/Architecture/Data Flow | 주요 인터페이스/데이터 흐름 Review | TBD | TBD | Draft |
+| M3 | Build Complete | V1 구현 완료 | 기능/코드/구성 | 핵심 Task 완료 및 통합 가능 | TBD | TBD | Draft |
+| M4 | Verification Complete | 품질 기준 충족 | QA/Evidence | Critical Test PASS, Blocker 0 | TBD | TBD | Draft |
+
+## 2. Gate 운영 원칙
+- Exit Criteria 미충족 시 다음 단계 완료로 표시하지 않는다.
+- 범위 변경이 Milestone에 영향을 주면 일정과 리스크를 함께 갱신한다.
+"""
+
+    backlog = f"""# {name} Product / Project Backlog
+
+> **주요 산출물** · {deliverables}
+
+## 1. 우선순위 기준
+- **High**: V1 목표/핵심 Requirement 달성에 필수
+- **Medium**: 품질/운영성 향상에 중요
+- **Low**: 후속 개선 가능
+
+## 2. Backlog
+
+| ID | Epic/Feature | 작업 항목 | Priority | Owner | Status | Requirement | Definition of Done |
+|---|---|---|---|---|---|---|---|
+| BL-001 | Definition | 핵심 요구사항 상세화 | High | TBD | Todo | REQ-* | 요구사항 Review 완료 |
+| BL-002 | Design | System Process/Architecture 기준선 | High | TBD | Todo | REQ-* | 설계 Review 완료 |
+| BL-003 | Verification | QA/Test Case 및 Evidence 기준 정의 | High | TBD | Todo | REQ-* | Requirement별 검증 연결 |
+
+## 3. 프로젝트 유형별 확인 질문
 - {meta['extra_questions'][0]}
 - {meta['extra_questions'][1]}
-
-| ID | 항목 | 우선순위 | 담당 | 상태 | 연결 요구사항 |
-|---|---|---|---|---|---|
-| BL-001 | 기획/요구사항 상세화 | High |  | Todo |  |
 """
-    return {"proposal": proposal, "plan": plan, "requirements": req, "milestone": milestone, "backlog": backlog}
+
+    return {
+        "proposal": proposal,
+        "plan": plan,
+        "requirements": req,
+        "milestone": milestone,
+        "backlog": backlog,
+    }
 
 
 def intake_metadata() -> dict[str, Any]:

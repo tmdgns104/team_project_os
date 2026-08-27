@@ -1,5 +1,5 @@
 const state = {
-  projects: [], projectId: null, snapshot: null, view: 'overview', ws: null, selectedDocumentId: null,
+  projects: [], projectId: null, snapshot: null, view: 'overview', ws: null, selectedDocumentId: null, documentEditMode: false,
   accessKey: localStorage.getItem('project_os_access_key') || ''
 };
 const titles = {
@@ -125,6 +125,53 @@ function renderAssistant(){
   </div>`;
 }
 
+function inlineMarkdown(text){
+  let s=esc(text??'');
+  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  s=s.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/\*([^*]+)\*/g,'<em>$1</em>');
+  return s;
+}
+function markdownHeadings(md){
+  return String(md||'').split(/\r?\n/).map((line,i)=>{const m=line.match(/^(#{2,3})\s+(.+)$/);return m?{level:m[1].length,text:m[2].replace(/[*_`]/g,'').trim(),id:`sec-${i}`}:null}).filter(Boolean);
+}
+function markdownTable(lines,start){
+  if(start+1>=lines.length || !/^\s*\|?\s*:?-+/.test(lines[start+1].replace(/^\s*\|/,''))) return null;
+  const rows=[]; let i=start;
+  while(i<lines.length && lines[i].includes('|') && lines[i].trim()){ rows.push(lines[i]); i++; }
+  if(rows.length<2) return null;
+  const cells=row=>row.trim().replace(/^\||\|$/g,'').split('|').map(x=>x.trim());
+  const head=cells(rows[0]); const body=rows.slice(2).map(cells);
+  return {html:`<div class="doc-table-wrap"><table class="doc-table"><thead><tr>${head.map(c=>`<th>${inlineMarkdown(c)}</th>`).join('')}</tr></thead><tbody>${body.map(r=>`<tr>${head.map((_,idx)=>`<td>${inlineMarkdown(r[idx]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`,next:i};
+}
+function renderMarkdownDocument(md){
+  const lines=String(md||'').replace(/\r/g,'').split('\n');
+  let out='', i=0, inCode=false, code=[];
+  const closeCode=()=>{if(inCode){out+=`<pre class="doc-code"><code>${esc(code.join('\n'))}</code></pre>`;inCode=false;code=[];}};
+  while(i<lines.length){
+    const line=lines[i];
+    if(line.trim().startsWith('```')){ if(inCode) closeCode(); else {inCode=true;code=[];} i++; continue; }
+    if(inCode){code.push(line);i++;continue;}
+    const table=markdownTable(lines,i); if(table){out+=table.html;i=table.next;continue;}
+    const h=line.match(/^(#{1,4})\s+(.+)$/);
+    if(h){const level=h[1].length;const id=`sec-${i}`;out+=`<h${level} id="${id}">${inlineMarkdown(h[2])}</h${level}>`;i++;continue;}
+    const quote=line.match(/^>\s?(.*)$/); if(quote){const q=[];while(i<lines.length&&/^>/.test(lines[i])){q.push(lines[i].replace(/^>\s?/,''));i++;}out+=`<div class="doc-callout">${q.map(x=>`<p>${inlineMarkdown(x)}</p>`).join('')}</div>`;continue;}
+    const task=line.match(/^\s*-\s+\[([ xX])\]\s+(.+)$/); if(task){out+=`<div class="doc-check"><span class="doc-checkbox ${task[1].trim()?'checked':''}">${task[1].trim()?'✓':''}</span><span>${inlineMarkdown(task[2])}</span></div>`;i++;continue;}
+    const bullet=line.match(/^\s*[-*]\s+(.+)$/); if(bullet){const arr=[];while(i<lines.length){const m=lines[i].match(/^\s*[-*]\s+(.+)$/);if(!m)break;arr.push(m[1]);i++;}out+=`<ul>${arr.map(x=>`<li>${inlineMarkdown(x)}</li>`).join('')}</ul>`;continue;}
+    const num=line.match(/^\s*\d+\.\s+(.+)$/); if(num){const arr=[];while(i<lines.length){const m=lines[i].match(/^\s*\d+\.\s+(.+)$/);if(!m)break;arr.push(m[1]);i++;}out+=`<ol>${arr.map(x=>`<li>${inlineMarkdown(x)}</li>`).join('')}</ol>`;continue;}
+    if(/^---+$/.test(line.trim())){out+='<hr>';i++;continue;}
+    if(!line.trim()){i++;continue;}
+    const para=[];while(i<lines.length&&lines[i].trim()&&!/^(#{1,4})\s+/.test(lines[i])&&!/^\s*[-*]\s+/.test(lines[i])&&!/^\s*\d+\.\s+/.test(lines[i])&&!/^>/.test(lines[i])&&!lines[i].trim().startsWith('```')){if(markdownTable(lines,i))break;para.push(lines[i].trim());i++;}
+    if(para.length)out+=`<p>${inlineMarkdown(para.join(' '))}</p>`;else i++;
+  }
+  closeCode(); return out;
+}
+function documentQuality(d){
+  const c=String(d.content||''); const headings=(c.match(/^##\s+/gm)||[]).length; const tables=(c.match(/^\|.+\|$/gm)||[]).length; const tbd=(c.match(/TBD|작성 필요|확인 필요/g)||[]).length;
+  let score=Math.min(100,35+headings*7+Math.min(25,tables*2)-Math.min(25,tbd*3));
+  if(c.length>1800)score+=8; score=Math.max(20,Math.min(100,score));
+  const label=score>=85?'공유 가능':score>=65?'검토 필요':'작성 중'; return {score,label};
+}
 function renderDocuments(){
   const s=state.snapshot;
   if(!s.documents?.length) return '<div class="empty">프로젝트 문서가 없습니다.</div>';
@@ -132,15 +179,32 @@ function renderDocuments(){
   const d=s.documents.find(x=>x.id===state.selectedDocumentId);
   const comments=s.document_comments.filter(c=>c.document_id===d.id);
   const completed=s.documents.filter(x=>['review','approved','complete'].includes(x.status)).length;
-  return `<div class="documents-head"><div><div class="eyebrow">PROJECT DOCUMENT WORKSPACE</div><h2>프로젝트 문서 ${completed}/${s.documents.length}</h2><p class="muted">문서는 서버에 공유 저장되며 저장 전 내용은 revision으로 남습니다.</p></div><div><button class="mini-btn" data-action="export-project">첨부 패키지 ZIP</button></div></div>
-  <div class="document-layout">
+  const headings=markdownHeadings(d.content); const quality=documentQuality(d); const editing=state.documentEditMode;
+  const toc=headings.length?`<nav class="doc-toc"><div class="doc-toc-title">목차</div>${headings.map(h=>`<a class="lv${h.level}" href="#${h.id}">${esc(h.text)}</a>`).join('')}</nav>`:'';
+  return `<div class="documents-head"><div><div class="eyebrow">DELIVERABLE WORKSPACE</div><h2>프로젝트 공식 산출물 ${completed}/${s.documents.length}</h2><p class="muted">Markdown은 원본 포맷으로 유지하고, 기본 화면에서는 실무 보고서 형태로 렌더링합니다.</p></div><div><button class="mini-btn" data-action="export-project">산출물 패키지 ZIP</button></div></div>
+  <div class="document-layout professional-doc-layout">
     <div class="panel document-list">${s.documents.map(x=>`<button class="document-item ${x.id===d.id?'active':''}" data-document-id="${x.id}"><span><strong>${esc(x.title)}</strong><small>${esc(x.updated_by)} · ${new Date(x.updated_at).toLocaleString('ko-KR')}</small></span>${statusChip(x.status)}</button>`).join('')}</div>
-    <div class="panel document-editor">
-      <div class="document-editor-head"><div><h3>${esc(d.title)}</h3><small class="muted">${esc(d.doc_type)} · 마지막 수정 ${new Date(d.updated_at).toLocaleString('ko-KR')}</small></div>${statusChip(d.status)}</div>
-      <div class="document-controls">${selectField('document_status','상태',[['draft','초안'],['review','검토중'],['approved','승인됨'],['complete','완료']],d.status)}${field('document_editor','작성자',d.updated_by||'Team member')}</div>
-      <div class="field"><label>공동 문서 내용 (Markdown)</label><textarea id="documentContent" class="document-content">${esc(d.content)}</textarea></div>
-      <div class="form-actions"><button type="button" class="ghost-btn" data-action="export-document">Markdown 다운로드</button><button type="button" class="primary-btn" data-action="save-document">문서 저장</button></div>
-      <div class="document-comments"><h3>Discussion</h3><form id="documentCommentForm" class="comment-form"><input name="author" value="Team member" aria-label="작성자"><input name="body" placeholder="이 문서에 의견 남기기" aria-label="댓글"><button class="mini-btn" type="submit">댓글</button></form>${comments.length?comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><span>${esc(c.body)}</span><small>${new Date(c.created_at).toLocaleString('ko-KR')}</small></div>`).join(''):'<div class="empty compact">아직 의견이 없습니다.</div>'}</div>
+    <div class="document-stage">
+      <div class="document-stage-toolbar">
+        <div><span class="chip ${quality.score>=85?'good':quality.score>=65?'warn':''}">문서 품질 ${quality.score} · ${quality.label}</span>${s.project.lifecycle==='draft'?'<span class="chip warn">Live Draft</span>':''}</div>
+        <div class="doc-view-actions"><button class="mini-btn ${!editing?'active':''}" data-action="document-read-mode">문서 보기</button><button class="mini-btn ${editing?'active':''}" data-action="document-edit-mode">Markdown 편집</button><button class="mini-btn" data-action="print-document">인쇄/PDF</button></div>
+      </div>
+      ${editing?`<div class="panel document-editor">
+        <div class="document-editor-head"><div><h3>${esc(d.title)}</h3><small class="muted">${esc(d.doc_type)} · 마지막 수정 ${new Date(d.updated_at).toLocaleString('ko-KR')}</small></div>${statusChip(d.status)}</div>
+        <div class="document-controls">${selectField('document_status','상태',[['draft','초안'],['review','검토중'],['approved','승인됨'],['complete','완료']],d.status)}${field('document_editor','작성자',d.updated_by||'Team member')}</div>
+        <div class="field"><label>Markdown 원문</label><textarea id="documentContent" class="document-content">${esc(d.content)}</textarea></div>
+        <div class="form-actions"><button type="button" class="ghost-btn" data-action="export-document">Markdown 다운로드</button><button type="button" class="primary-btn" data-action="save-document">문서 저장</button></div>
+      </div>`:`<article class="professional-document" id="printableDocument">
+        <header class="doc-cover">
+          <div class="doc-cover-kicker">TEAM PROJECT OS · PROJECT DELIVERABLE</div>
+          <h1>${esc(d.title)}</h1>
+          <p class="doc-project-name">${esc(s.project.name)}</p>
+          <div class="doc-meta-grid"><div><span>문서 상태</span><strong>${statusChip(d.status)}</strong></div><div><span>작성/갱신</span><strong>${esc(d.updated_by)}</strong></div><div><span>최종 수정</span><strong>${new Date(d.updated_at).toLocaleString('ko-KR')}</strong></div><div><span>Lifecycle</span><strong>${s.project.lifecycle==='draft'?'설계 중 Draft':'Active Project'}</strong></div></div>
+        </header>
+        <div class="doc-body-layout">${toc}<section class="doc-content-rendered">${renderMarkdownDocument(d.content)}</section></div>
+        <footer class="doc-footer"><span>${esc(s.project.name)}</span><span>${esc(d.title)} · Team Project OS</span></footer>
+      </article>`}
+      <div class="panel document-comments"><h3>Review / Discussion</h3><form id="documentCommentForm" class="comment-form"><input name="author" value="Team member" aria-label="작성자"><input name="body" placeholder="검토 의견 또는 변경 요청" aria-label="댓글"><button class="mini-btn" type="submit">의견 등록</button></form>${comments.length?comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><span>${esc(c.body)}</span><small>${new Date(c.created_at).toLocaleString('ko-KR')}</small></div>`).join(''):'<div class="empty compact">아직 검토 의견이 없습니다.</div>'}</div>
     </div>
   </div>`;
 }
@@ -178,7 +242,7 @@ function renderTeam(){
 function bindViewActions(){
   document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>handleAction(b.dataset.action,b.dataset.view)));
   document.querySelectorAll('[data-task-id]').forEach(c=>c.addEventListener('click',()=>editTask(Number(c.dataset.taskId))));
-  document.querySelectorAll('[data-document-id]').forEach(c=>c.addEventListener('click',()=>{state.selectedDocumentId=Number(c.dataset.documentId);render();}));
+  document.querySelectorAll('[data-document-id]').forEach(c=>c.addEventListener('click',()=>{state.selectedDocumentId=Number(c.dataset.documentId);state.documentEditMode=false;render();}));
   const commentForm=$('#documentCommentForm'); if(commentForm) commentForm.addEventListener('submit',submitDocumentComment);
   const conversationForm=$('#conversationForm'); if(conversationForm) conversationForm.addEventListener('submit',submitConversationMessage);
   const chat=$('#chatMessages'); if(chat) chat.scrollTop=chat.scrollHeight;
@@ -198,7 +262,7 @@ function selectField(name,label,options,current=''){ return `<div class="field">
 function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',assistant:'start-assistant-current',documents:'document-help',traceability:'add-trace-link',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
 function handleAction(action, view){
   if(action==='new-project') return newProject(); if(action==='start-ai-project') return startAIProject(false); if(action==='start-assistant-current') return startAIProject(true); if(action==='apply-conversation') return applyConversation(); if(action==='assistant-pair-help') return assistantPairHelp(); if(action==='add-task') return addTask(); if(action==='add-requirement') return addRequirement(); if(action==='edit-goal') return editGoal();
-  if(action==='save-document') return saveDocument(); if(action==='document-help') return documentHelp(); if(action==='export-project') return exportProject(); if(action==='export-document') return exportDocument(); if(action==='add-trace-link') return addTraceLink(); if(action==='delete-trace') return deleteTrace(view);
+  if(action==='save-document') return saveDocument(); if(action==='document-help') return documentHelp(); if(action==='document-read-mode'){state.documentEditMode=false;return render();} if(action==='document-edit-mode'){state.documentEditMode=true;return render();} if(action==='print-document') return window.print(); if(action==='export-project') return exportProject(); if(action==='export-document') return exportDocument(); if(action==='add-trace-link') return addTraceLink(); if(action==='delete-trace') return deleteTrace(view);
   if(action==='add-node') return addNode(view); if(action==='add-edge') return addEdge(view); if(action==='add-idea') return addIdea(); if(action==='add-decision') return addDecision(); if(action==='add-member') return addMember(); if(action==='add-ai-job') return addAIJob(); if(action==='bridge-help') return bridgeHelp();
 }
 function startAIProject(useCurrent=false){

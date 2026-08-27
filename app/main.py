@@ -30,20 +30,21 @@ app = FastAPI(title="Team Project OS", version="0.10.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
-    ("proposal", "기획서", "# 기획서\n\n## 1. 배경 및 문제 정의\n\n## 2. 프로젝트 목표\n\n## 3. 대상 사용자\n\n## 4. 핵심 가치\n\n## 5. 성공 기준\n\n## 6. 범위 / 제외 범위\n"),
-    ("plan", "계획서", "# 계획서\n\n## 1. 추진 범위\n\n## 2. 일정\n\n## 3. 역할과 책임\n\n## 4. 개발/운영 전략\n\n## 5. 리스크와 대응\n"),
-    ("milestone", "마일스톤", "# 마일스톤\n\n| Milestone | 목표 | 완료 조건 | 목표일 | 상태 |\n|---|---|---|---|---|\n| M1 |  |  |  | Draft |\n"),
-    ("backlog", "백로그", "# 백로그\n\n| ID | 항목 | 우선순위 | 담당 | 상태 | 연결 요구사항 |\n|---|---|---|---|---|---|\n"),
-    ("requirements", "요구사항 정의서", "# 요구사항 정의서\n\n| ID | 요구사항 | 상세 | 우선순위 | 상태 | 검증 기준 |\n|---|---|---|---|---|---|\n"),
-    ("service_policy", "서비스 및 운영 정책서", "# 서비스 및 운영 정책서\n\n## 1. 사용자/권한 정책\n\n## 2. 데이터 보관 정책\n\n## 3. 장애/예외 처리 정책\n\n## 4. 로그/감사 정책\n\n## 5. 운영 및 배포 정책\n"),
-    ("function_definition", "기능 정의서", "# 기능 정의서\n\n| 기능 ID | 기능명 | 입력 | 처리 | 출력 | 예외 | 관련 요구사항 |\n|---|---|---|---|---|---|---|\n"),
-    ("ia", "IA (Information Architecture, 정보구조도)", "# IA\n\n## 정보 구조\n\n- Home\n  - \n\n## 화면/메뉴 관계\n"),
-    ("screen_design", "화면 설계서", "# 화면 설계서\n\n## SCREEN-001\n\n### 목적\n\n### 주요 컴포넌트\n\n### 사용자 동작\n\n### 연결 기능/API\n"),
-    ("system_architecture", "시스템 구조도", "# 시스템 구조도\n\n## 구성 요소\n\n## 연결 관계\n\n## 배포 구조\n\n> Design > Architecture Canvas와 함께 관리합니다.\n"),
-    ("data_flow", "데이터 플로우", "# 데이터 플로우\n\n| Source | Data | Processing | Destination | Protocol/Format |\n|---|---|---|---|---|\n\n> Design > Data Flow Canvas와 함께 관리합니다.\n"),
-    ("api_design", "API 설계 문서", "# API 설계 문서\n\n| API ID | Method | Path | 목적 | Request | Response | Error |\n|---|---|---|---|---|---|---|\n"),
-    ("qa", "QA 문서", "# QA 문서\n\n## QA Strategy\n\n## Test Cases\n\n| TC ID | 연결 요구사항 | 사전조건 | 절차 | Expected | Result | Evidence |\n|---|---|---|---|---|---|---|\n"),
+    ("proposal", "기획서", "# 기획서\n\n> 프로젝트 추진 배경·목표·범위·KPI를 합의하는 기준 문서\n\n## Executive Summary\n\n## 1. 추진 배경 및 문제 정의\n\n## 2. 프로젝트 목표 / KPI\n\n## 3. 이해관계자\n\n## 4. In Scope / Out of Scope\n\n## 5. AS-IS / TO-BE\n\n## 6. 산출물\n\n## 7. 제약사항 / 전제조건\n\n## 8. 리스크\n\n## 9. 승인 기준\n"),
+    ("plan", "계획서", "# 프로젝트 계획서\n\n> 실행 일정·WBS·R&R·리스크·변경관리 기준\n\n## 1. 추진 전략\n\n## 2. 범위 / 산출물\n\n## 3. 일정 / 마일스톤\n\n## 4. Work Breakdown Structure\n\n## 5. 역할과 책임 (R&R)\n\n## 6. 제약사항 / 의존성\n\n## 7. 리스크 관리\n\n## 8. 품질 / 검증 계획\n\n## 9. 변경관리\n"),
+    ("milestone", "마일스톤", "# 마일스톤 관리표\n\n| ID | Milestone | 목표 | 주요 산출물 | Entry Criteria | Exit Criteria | 목표일 | Owner | 상태 |\n|---|---|---|---|---|---|---|---|---|\n| M1 | Definition Baseline | 요구사항 기준선 | 기획/요구사항 | TBD | 핵심 REQ Review | TBD | TBD | Draft |\n| M2 | Design Baseline | 설계 기준선 | Process/Architecture/Data Flow | M1 | 설계 Review | TBD | TBD | Draft |\n"),
+    ("backlog", "백로그", "# Product / Project Backlog\n\n| ID | Epic/Feature | 작업 항목 | Priority | Owner | Status | Requirement | Definition of Done |\n|---|---|---|---|---|---|---|---|\n| BL-001 | Definition | 핵심 요구사항 상세화 | High | TBD | Todo | REQ-* | Review 완료 |\n"),
+    ("requirements", "요구사항 정의서", "# 요구사항 정의서\n\n> 구현·검증 가능한 Requirement 기준선\n\n## 1. 작성 원칙\n\n## 2. Functional Requirements\n\n| ID | Type | 요구사항 | 상세 | Priority | Acceptance Criteria | Verification | 상태 |\n|---|---|---|---|---|---|---|---|\n| REQ-001 | Functional | TBD | TBD | High | TBD | Test/Review | Draft |\n\n## 3. Non-Functional Requirements\n\n## 4. Traceability Matrix\n"),
+    ("service_policy", "서비스 및 운영 정책서", "# 서비스 및 운영 정책서\n\n> 실제 운영 시 일관된 의사결정을 위한 정책 기준\n\n## 1. 목적 / 적용 범위\n\n## 2. 사용자 / 역할 / 권한 정책\n\n| Role | 허용 기능 | 제한 | 승인자 |\n|---|---|---|---|\n| TBD | TBD | TBD | TBD |\n\n## 3. 데이터 수집 / 보관 / 삭제 정책\n\n## 4. 장애 / 예외 / 복구 정책\n\n## 5. 로그 / 감사 / 모니터링 정책\n\n## 6. 배포 / 변경 / Rollback 정책\n\n## 7. 보안 / 개인정보 / 규제 Open Items\n"),
+    ("function_definition", "기능 정의서", "# 기능 정의서\n\n> 사용자/시스템 기능의 입력·처리·출력·예외·검증 기준\n\n| 기능 ID | 기능명 | Actor/Trigger | 입력 | 정상 처리 | 출력 | 예외/오류 | Acceptance Criteria | 관련 REQ |\n|---|---|---|---|---|---|---|---|---|\n| FUNC-001 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | REQ-* |\n"),
+    ("ia", "IA (Information Architecture, 정보구조도)", "# IA (Information Architecture)\n\n> 메뉴·화면·정보 구조와 이동 관계 정의\n\n## 1. Navigation Model\n\n```text\nRoot\n└─ TBD\n```\n\n## 2. 화면/메뉴 목록\n\n| IA ID | Depth | 메뉴/화면 | 목적 | 주요 사용자 | 연결 화면 | 권한 |\n|---|---|---|---|---|---|---|\n| IA-001 | 1 | TBD | TBD | TBD | TBD | TBD |\n\n## 3. 주요 사용자 Flow\n"),
+    ("screen_design", "화면 설계서", "# 화면 설계서\n\n> 화면 목적·상태·사용자 동작·데이터·Validation 정의\n\n## SCREEN-001 · TBD\n\n| 항목 | 내용 |\n|---|---|\n| 목적 | TBD |\n| 대상 사용자 | TBD |\n| 진입 조건 | TBD |\n| 종료/성공 조건 | TBD |\n\n### 주요 컴포넌트\n\n| Component ID | UI 요소 | 표시 데이터 | 사용자 동작 | Validation | Error/Empty State |\n|---|---|---|---|---|---|\n| UI-001 | TBD | TBD | TBD | TBD | TBD |\n\n### 연결 기능 / API\n"),
+    ("system_architecture", "시스템 구조도", "# 시스템 구조도\n\n> 시스템 경계·컴포넌트 책임·인터페이스·배포 구조 정의\n\n## 1. System Context\n\n## 2. Component Responsibilities\n\n| Component | Responsibility | Technology | Interface | Dependency | Owner |\n|---|---|---|---|---|---|\n| TBD | TBD | TBD | TBD | TBD | TBD |\n\n## 3. Interface / Integration\n\n## 4. Deployment / Runtime\n\n## 5. Availability / Security Considerations\n\n> Design > Architecture Canvas와 함께 관리합니다.\n"),
+    ("data_flow", "데이터 플로우", "# 데이터 플로우\n\n> 데이터 생성·변환·저장·소비와 책임 경계 정의\n\n| Flow ID | Source | Data | Trigger/Frequency | Processing | Destination | Protocol/Format | Validation | Failure Handling |\n|---|---|---|---|---|---|---|---|---|\n| DF-001 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |\n\n## Data Ownership / Retention\n\n> Design > Data Flow Canvas와 함께 관리합니다.\n"),
+    ("api_design", "API 설계 문서", "# API 설계 문서\n\n> 시스템 간 Contract와 오류/보안/호환성 기준 정의\n\n## 1. API Conventions\n- Base URL / Versioning: TBD\n- Authentication / Authorization: TBD\n- Content-Type: application/json (해당 시)\n\n## 2. Endpoint Catalog\n\n| API ID | Method | Path | 목적 | Auth | Request | Success Response | Error | 관련 REQ |\n|---|---|---|---|---|---|---|---|---|\n| API-001 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | REQ-* |\n\n## 3. Error Model\n\n## 4. Idempotency / Timeout / Retry\n"),
+    ("qa", "QA 문서", "# QA / Test Plan & Result\n\n> Requirement 기반 검증 전략·Test Case·Evidence 관리\n\n## 1. Test Strategy\n\n| Test Level | Scope | Environment | Entry Criteria | Exit Criteria |\n|---|---|---|---|---|\n| Functional | 핵심 Requirement | TBD | 기능 구현 완료 | Critical TC PASS |\n\n## 2. Test Cases\n\n| TC ID | Requirement | Priority | Preconditions | Test Steps | Expected Result | Actual Result | Status | Evidence |\n|---|---|---|---|---|---|---|---|---|\n| TC-001 | REQ-001 | High | TBD | TBD | TBD | - | Not Run | TBD |\n\n## 3. Defect / Issue Summary\n\n## 4. Release / Acceptance Gate\n- Critical/Blocker 미해결 0건\n- 핵심 Requirement 검증 Evidence 확보\n"),
 ]
+
 
 
 

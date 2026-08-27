@@ -1,8 +1,14 @@
-# Team Project OS V0.10
+# Team Project OS V0.11
 
 사람이 처음부터 완벽한 기획서를 작성하지 않아도, **자기 생성형 AI와 충분히 대화해 프로젝트를 구체화한 뒤 `/apply`로 Project OS에 정식 프로젝트를 만드는 팀 협업 프로그램**입니다.
 
 AI는 프로젝트의 필수 의존성이 아니라 선택 가능한 Worker Provider입니다. AI를 사용하지 않는 팀원도 같은 웹 UI와 프로젝트 상태를 사용할 수 있고, AI를 사용하는 팀원은 자기 PC의 **Codex / Claude Code / OpenCode / Antigravity CLI**를 연결합니다.
+
+## V0.11 Professional Deliverables
+
+Documents는 단순 Markdown textarea가 아니라 **실무 산출물용 Read-first Workspace**로 표시됩니다. Markdown 원본은 그대로 보존하면서 기본 화면은 표지, 문서 메타, 목차, 제목 계층, 표, 체크리스트, Callout, 코드블록을 갖춘 보고서 형태로 렌더링합니다. `Markdown 편집`으로 원문을 수정할 수 있고 `인쇄/PDF`로 브라우저 인쇄 레이아웃을 사용할 수 있습니다.
+
+13종 기본 문서 템플릿도 실무 기준 필드로 확장했습니다. 정보가 없는 경우 임의로 꾸며내지 않고 `TBD/확인 필요`로 유지합니다.
 
 ## V0.10 Live Design Draft
 
