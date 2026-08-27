@@ -1,0 +1,33 @@
+name: Fix Project Assistant CLI commands
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-bridge-cli.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply parser fix
+        run: python scripts/fix_bridge_cli.py
+      - name: Verify bridge CLI and full regression
+        run: |
+          python -m py_compile local_bridge/bridge.py tests/test_bridge.py
+          python local_bridge/bridge.py -h | grep -q 'assistant-register'
+          python local_bridge/bridge.py -h | grep -q 'assistant-run'
+          pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          node --check app/static/app.js
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add local_bridge/bridge.py tests/test_bridge.py
+          git commit -m 'fix conversational assistant CLI subcommands [skip ci]'
+          git push
