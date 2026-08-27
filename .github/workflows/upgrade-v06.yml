@@ -1,0 +1,38 @@
+name: Upgrade Team Project OS v0.6
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-v06.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply v0.6 changes
+        run: python scripts/upgrade_v06.py
+
+      - name: Verify v0.6
+        run: |
+          python -m py_compile app/main.py app/project_intake.py app/conversation.py local_bridge/bridge.py tests/*.py
+          pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          node --check app/static/app.js
+          grep -q 'design_updates' app/conversation.py
+          grep -q '@app.delete("/api/projects/{project_id}")' app/main.py
+          grep -q '프로젝트 삭제' app/static/index.html
+          grep -q 'Conversational Visual Design (V0.6)' README.md
+
+      - name: Commit v0.6
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app README.md tests
+          git commit -m 'add conversational canvas design and safe project deletion [skip ci]'
+          git push
