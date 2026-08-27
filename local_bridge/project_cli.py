@@ -16,7 +16,8 @@ from local_bridge.providers import SUPPORTED_PROVIDERS, print_doctor, run_provid
 WELCOME = (
     "AI Design Session을 시작합니다. 아직 Project OS 프로젝트는 생성되지 않습니다.\n"
     "막연한 아이디어부터 AI와 충분히 대화해서 구체화하세요.\n"
-    "명령: /status 세션 상태, /preview 프로젝트 미리보기, /apply 정식 생성, /quit 종료"
+    "모르겠는 세부사항은 '알아서 임시로 정해줘'라고 하면 Autofill Mode로 채울 수 있습니다.\n"
+    "명령: /status, /autofill on|off, /preview, /apply, /quit"
 )
 
 SESSION_ROOT = Path.home() / ".team_project_os" / "design_sessions"
@@ -45,10 +46,29 @@ def blank_brief() -> dict:
     return data
 
 
-def build_design_chat_prompt(messages: list[dict]) -> str:
+def _requests_autofill(text: str) -> bool:
+    compact = "".join(str(text or "").lower().split())
+    phrases = (
+        "알아서해줘", "알아서정해", "알아서임시", "임시로다정", "임시로정해",
+        "네가정해", "너가정해", "적당히정해", "세부적인건알아서", "세부사항은알아서",
+        "알아서채워", "맡길게", "autofill",
+    )
+    return any(phrase in compact for phrase in phrases)
+
+
+def build_design_chat_prompt(messages: list[dict], autofill_mode: bool = False) -> str:
     transcript = "\n\n".join(
         f"{'USER' if m['role'] == 'user' else 'ASSISTANT'}:\n{m['content']}"
         for m in messages
+    )
+    mode_rules = (
+        "AUTOFILL MODE IS ON. When the user does not know a low-risk implementation detail, "
+        "choose a sensible reversible default instead of repeatedly asking. Clearly call it an 'AI 임시 결정' "
+        "and briefly explain why. Never treat it as user-confirmed. Still ask before irreversible/high-impact choices "
+        "such as real spending, purchases, credentials/permissions, personal data policy, legal/regulatory commitments, "
+        "or external production changes."
+        if autofill_mode else
+        "AUTOFILL MODE IS OFF. Recommend options, but do not choose unknown details for the user unless the user explicitly delegates that choice."
     )
     return f"""You are the user's project design partner inside Team Project OS.
 
@@ -63,7 +83,8 @@ CONVERSATION RULES
 - Help define the problem, goal, users, scope, deliverables, success criteria, process, architecture, data flow, schedule, risks, and verification approach when relevant.
 - Explain alternatives and trade-offs when a choice is not obvious.
 - Distinguish what the user confirmed from what you merely recommend.
-- Never silently turn an unknown budget, deadline, KPI, technology, device, protocol, policy, or requirement into a confirmed fact.
+- Never silently turn an unknown item into a USER-confirmed fact.
+- {mode_rules}
 - If the project is too large, proactively suggest a smaller V1.
 - Do not create or modify Project OS state yet. The project will only be materialized after /apply outside this AI turn.
 - Continue the discussion from the full transcript below. Answer the latest USER turn.
@@ -73,10 +94,18 @@ TRANSCRIPT
 """
 
 
-def build_distiller_prompt(messages: list[dict]) -> str:
+def build_distiller_prompt(messages: list[dict], autofill_mode: bool = False) -> str:
     transcript = "\n\n".join(
         f"{'USER' if m['role'] == 'user' else 'ASSISTANT'}:\n{m['content']}"
         for m in messages
+    )
+    autofill_rules = (
+        "AUTOFILL MODE IS ON. Fill unresolved LOW-RISK, REVERSIBLE design/implementation details with practical V1 defaults. "
+        "Every such AI-selected value MUST also create a decision with status='provisional', and the body must state why it was chosen and when it should be revisited. "
+        "Examples: local DB choice, web framework, basic screen set, folder/module split, simulator-first approach, development order, local deployment. "
+        "Do NOT autofill real spending/purchases, secrets or permission expansion, personal-data/legal/regulatory policy, contractual commitments, destructive production actions, or safety-critical thresholds; keep those in pending."
+        if autofill_mode else
+        "AUTOFILL MODE IS OFF. Do not fill unresolved facts unless the transcript contains an explicit user decision."
     )
     return f"""You are the Project Distiller for Team Project OS.
 The user has finished or paused a free-form project design conversation with an AI.
@@ -85,13 +114,15 @@ Analyze the ENTIRE transcript once and convert it into one structured project pr
 AUTHORITY RULES
 - USER statements and explicit USER acceptances are authoritative.
 - ASSISTANT suggestions are NOT confirmed facts unless the USER accepted them or they are only used as clearly proposed/TBD items.
-- Do not invent budget, deadline, KPI target values, users, hardware, protocols, databases, cloud providers, policies, or requirements.
-- Unknown or unresolved facts go into pending.
+- Never label AI-selected defaults as user-confirmed.
+- {autofill_rules}
+- Unknown or unresolved items that are not safely autofilled go into pending.
 - You may create a neutral working project name from the confirmed topic if the user never named the project; if you do, add that naming decision to pending.
 - goal may summarize the user's confirmed intent without adding new scope.
 - Requirements must be traceable to explicit user intent or accepted design discussion.
-- Decisions should contain only confirmed decisions. Unaccepted alternatives belong in pending, not decisions.
-- Create process/architecture/dataflow only when supported by the conversation. Do not fabricate missing components.
+- Decisions may contain USER-confirmed decisions with status='accepted' and AI-filled reversible defaults with status='provisional'.
+- Provisional decisions are allowed to support a complete V1 process/architecture/dataflow when Autofill Mode is on.
+- Create process/architecture/dataflow from confirmed facts plus clearly provisional defaults; do not hide which choices are provisional.
 - Prefer a realistic V1 scope over an oversized project.
 
 OUTPUT
@@ -119,7 +150,7 @@ Return exactly ONE JSON object and no markdown fence. Use this schema:
     {{"ref":"REQ-001","title":"...","detail":"...","status":"defined"}}
   ],
   "decisions": [
-    {{"title":"...","body":"...","status":"accepted"}}
+    {{"title":"...","body":"...","status":"accepted|provisional"}}
   ],
   "document_updates": [
     {{"doc_type":"proposal|plan|milestone|backlog|requirements|service_policy|function_definition|ia|screen_design|system_architecture|data_flow|api_design|qa","content":"complete markdown when enough evidence exists","reason":"..."}}
@@ -147,12 +178,13 @@ def distill_design(
     *,
     cwd: Path,
     custom_command: str | None = None,
+    autofill_mode: bool = False,
 ) -> tuple[dict, dict]:
     if not any(m.get("role") == "user" for m in messages):
         raise RuntimeError("아직 사용자와의 프로젝트 대화가 없습니다.")
     result = run_provider(
         provider,
-        build_distiller_prompt(messages),
+        build_distiller_prompt(messages, autofill_mode=autofill_mode),
         cwd=cwd,
         purpose="interview",
         custom_command=custom_command,
@@ -167,6 +199,9 @@ def distill_design(
 
 def preview_lines(brief: dict, pending: dict) -> list[str]:
     quality = evaluate_intake(brief)
+    decisions = pending.get("decisions", [])
+    accepted_count = sum(1 for d in decisions if str(d.get("status", "")).lower() in {"accepted", "confirmed"})
+    provisional = [d for d in decisions if str(d.get("status", "")).lower() == "provisional"]
     lines = [
         "",
         "=" * 62,
@@ -177,10 +212,14 @@ def preview_lines(brief: dict, pending: dict) -> list[str]:
         f"유형: {brief.get('project_type') or 'generic'}",
         f"정의 품질: {quality['score']}/100 ({quality['level']})",
         f"요구사항: {len(pending.get('requirements', []))}개",
-        f"확정 Decision: {len(pending.get('decisions', []))}개",
+        f"사람 확정 Decision: {accepted_count}개",
+        f"AI 임시 Decision: {len(provisional)}개",
         f"문서 업데이트: {len(pending.get('document_updates', []))}개",
         f"Canvas 설계: {len(pending.get('design_updates', []))}개",
     ]
+    if provisional:
+        lines.append("AI 임시 결정(PROVISIONAL):")
+        lines.extend(f"  - {item.get('title', '')}: {item.get('body', '')}" for item in provisional[:12])
     unresolved = pending.get("pending", [])
     if unresolved:
         lines.append("미결정/TBD:")
@@ -271,24 +310,26 @@ def _session_file(args) -> Path:
     return SESSION_ROOT / f"design-{stamp}-{args.provider}.json"
 
 
-def save_session(path: Path, *, provider: str, member: str, messages: list[dict], applied_project: dict | None = None) -> None:
+def save_session(path: Path, *, provider: str, member: str, messages: list[dict], applied_project: dict | None = None, autofill_mode: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "provider": provider,
         "member": member,
         "messages": messages,
         "applied_project": applied_project,
+        "autofill_mode": autofill_mode,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def print_session_status(path: Path, provider: str, messages: list[dict]) -> None:
+def print_session_status(path: Path, provider: str, messages: list[dict], autofill_mode: bool = False) -> None:
     user_turns = sum(1 for m in messages if m.get("role") == "user")
     assistant_turns = sum(1 for m in messages if m.get("role") == "assistant")
     print("\nDesign Session: 프로젝트 미생성 상태")
     print(f"AI Provider: {provider}")
     print(f"대화: 사용자 {user_turns}턴 / AI {assistant_turns}턴")
     print(f"세션 저장: {path}")
+    print(f"Autofill Mode: {'ON - 모르는 저위험 세부사항은 AI 임시 결정' if autofill_mode else 'OFF'}")
     print("/preview 또는 /apply 시점에만 전체 대화를 프로젝트 구조로 변환합니다.")
 
 
@@ -301,9 +342,12 @@ def interactive_design(args) -> int:
     session_file = _session_file(args)
     messages: list[dict] = []
     preview_cache: tuple[int, dict, dict] | None = None
+    autofill_mode = bool(getattr(args, "autofill", False))
 
     print(WELCOME)
     print(f"AI: {provider} / 세션: {session_file}")
+    if autofill_mode:
+        print("Autofill Mode: ON (AI 임시 결정 허용)")
     queued = args.initial or None
 
     while True:
@@ -313,7 +357,7 @@ def interactive_design(args) -> int:
             try:
                 user_text = input("\n나> ").strip()
             except (EOFError, KeyboardInterrupt):
-                save_session(session_file, provider=provider, member=args.member, messages=messages)
+                save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode)
                 print("\n세션을 저장하고 종료합니다.")
                 return 0
         if not user_text:
@@ -321,11 +365,26 @@ def interactive_design(args) -> int:
 
         command = user_text.lower()
         if command in {"/quit", "/exit"}:
-            save_session(session_file, provider=provider, member=args.member, messages=messages)
+            save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode)
             print(f"세션 저장: {session_file}")
             return 0
         if command == "/status":
-            print_session_status(session_file, provider, messages)
+            print_session_status(session_file, provider, messages, autofill_mode)
+            continue
+        if command.startswith("/autofill"):
+            parts = command.split()
+            if len(parts) == 1:
+                print(f"Autofill Mode: {'ON' if autofill_mode else 'OFF'}")
+            elif parts[1] in {"on", "1", "true"}:
+                autofill_mode = True
+                preview_cache = None
+                print("Autofill Mode ON: 모르는 저위험 세부사항은 AI가 PROVISIONAL로 임시 결정합니다.")
+            elif parts[1] in {"off", "0", "false"}:
+                autofill_mode = False
+                preview_cache = None
+                print("Autofill Mode OFF: 모르는 사항은 다시 질문하거나 TBD로 남깁니다.")
+            else:
+                print("사용법: /autofill on 또는 /autofill off")
             continue
         if command in {"/preview", "/apply"}:
             version = len(messages)
@@ -339,6 +398,7 @@ def interactive_design(args) -> int:
                         messages,
                         cwd=cwd,
                         custom_command=args.command or None,
+                        autofill_mode=autofill_mode,
                     )
                     preview_cache = (version, brief, pending)
                 print_preview(brief, pending)
@@ -361,17 +421,21 @@ def interactive_design(args) -> int:
                 member=args.member,
                 messages=messages,
                 applied_project=project,
+                autofill_mode=autofill_mode,
             )
             print(f"\n프로젝트 생성 완료: ID={project['id']} / {project['name']}")
             print(f"브라우저: {args.server.rstrip('/')}")
             return 0
 
+        if _requests_autofill(user_text) and not autofill_mode:
+            autofill_mode = True
+            print("Autofill Mode ON: '알아서/임시로 정해줘' 요청을 감지했습니다.")
         messages.append({"role": "user", "content": user_text})
         preview_cache = None
         try:
             result = run_provider(
                 provider,
-                build_design_chat_prompt(messages),
+                build_design_chat_prompt(messages, autofill_mode=autofill_mode),
                 cwd=cwd,
                 purpose="interview",
                 custom_command=args.command or None,
@@ -393,7 +457,7 @@ def interactive_design(args) -> int:
             print("\nAI 응답이 비어 있습니다.")
             continue
         messages.append({"role": "assistant", "content": answer})
-        save_session(session_file, provider=provider, member=args.member, messages=messages)
+        save_session(session_file, provider=provider, member=args.member, messages=messages, autofill_mode=autofill_mode)
         print(f"\n{provider}> {answer}")
 
 
@@ -409,6 +473,7 @@ def _add_design_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--command", default="", help="Custom CLI template; prefer {prompt_file}")
     parser.add_argument("--initial", default="", help="첫 아이디어를 바로 전달")
     parser.add_argument("--session-file", default="", help="Design Session 저장 파일 경로")
+    parser.add_argument("--autofill", action="store_true", help="모르는 저위험 세부사항을 AI가 PROVISIONAL로 임시 결정")
 
 
 def main(argv=None) -> int:

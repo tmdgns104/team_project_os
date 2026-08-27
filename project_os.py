@@ -17,6 +17,7 @@ def _add_design_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--command", default="")
     parser.add_argument("--initial", default="")
     parser.add_argument("--session-file", default="")
+    parser.add_argument("--autofill", action="store_true")
 
 
 def main() -> int:
@@ -59,6 +60,8 @@ def main() -> int:
         cli_args += ["--initial", args.initial]
     if args.session_file:
         cli_args += ["--session-file", args.session_file]
+    if args.autofill:
+        cli_args += ["--autofill"]
     return project_cli_main(cli_args)
 
 
