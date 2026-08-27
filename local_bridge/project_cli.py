@@ -3,25 +3,23 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from app.conversation import (
-    PROJECT_FIELDS,
-    build_interviewer_prompt,
-    combine_proposals,
-    merge_project_brief,
-    normalize_ai_result,
-)
-from app.project_intake import build_initial_documents, evaluate_intake
+from app.conversation import PROJECT_FIELDS, merge_project_brief, normalize_ai_result
+from app.project_intake import evaluate_intake
 from local_bridge.providers import SUPPORTED_PROVIDERS, print_doctor, run_provider
 
 
 WELCOME = (
-    "AI와 CMD에서 프로젝트를 정의합니다. 편하게 설명하세요.\n"
-    "명령: /status 현재 정의 보기, /apply Project OS에 생성, /quit 종료"
+    "AI Design Session을 시작합니다. 아직 Project OS 프로젝트는 생성되지 않습니다.\n"
+    "막연한 아이디어부터 AI와 충분히 대화해서 구체화하세요.\n"
+    "명령: /status 세션 상태, /preview 프로젝트 미리보기, /apply 정식 생성, /quit 종료"
 )
+
+SESSION_ROOT = Path.home() / ".team_project_os" / "design_sessions"
 
 
 def http_json(method: str, url: str, payload=None, access_key: str = ""):
@@ -47,46 +45,152 @@ def blank_brief() -> dict:
     return data
 
 
-def document_context(brief: dict) -> list[dict]:
-    generated = build_initial_documents(brief)
-    titles = {
-        "proposal": "기획서",
-        "plan": "계획서",
-        "milestone": "마일스톤",
-        "backlog": "백로그",
-        "requirements": "요구사항 정의서",
-    }
-    return [
-        {"doc_type": key, "title": titles.get(key, key), "content": value, "status": "draft"}
-        for key, value in generated.items()
-    ]
-
-
-def print_status(brief: dict, pending: dict) -> None:
-    quality = evaluate_intake(brief)
-    print(f"\n정의 품질: {quality['score']}/100 ({quality['level']})")
-    labels = {
-        "name": "이름", "goal": "목표", "project_type": "유형", "problem": "문제",
-        "users": "사용자/이해관계자", "deliverables": "산출물", "success_criteria": "성공 기준",
-        "scope": "범위", "current_state": "AS-IS", "target_state": "TO-BE",
-        "constraints": "제약", "schedule": "일정", "team": "팀", "risks": "리스크",
-        "description": "추가 설명",
-    }
-    for field in PROJECT_FIELDS:
-        value = str(brief.get(field) or "").strip()
-        if value:
-            print(f"- {labels.get(field, field)}: {value}")
-    print(
-        f"제안: 요구사항 {len(pending.get('requirements', []))}, "
-        f"결정 {len(pending.get('decisions', []))}, "
-        f"문서 {len(pending.get('document_updates', []))}, "
-        f"설계 {len(pending.get('design_updates', []))}"
+def build_design_chat_prompt(messages: list[dict]) -> str:
+    transcript = "\n\n".join(
+        f"{'USER' if m['role'] == 'user' else 'ASSISTANT'}:\n{m['content']}"
+        for m in messages
     )
-    if pending.get("pending"):
-        print("미결정:")
-        for item in pending["pending"]:
-            print(f"  - {item}")
-    print()
+    return f"""You are the user's project design partner inside Team Project OS.
+
+PURPOSE
+The user often starts with only a vague idea and cannot create a detailed plan alone.
+Your job during this DESIGN SESSION is to think with the user until the idea becomes a realistic project.
+
+CONVERSATION RULES
+- Speak naturally in Korean unless the user asks otherwise.
+- This is free-form design discussion. DO NOT output JSON in this phase.
+- Ask only 1-3 high-value questions at a time.
+- Help define the problem, goal, users, scope, deliverables, success criteria, process, architecture, data flow, schedule, risks, and verification approach when relevant.
+- Explain alternatives and trade-offs when a choice is not obvious.
+- Distinguish what the user confirmed from what you merely recommend.
+- Never silently turn an unknown budget, deadline, KPI, technology, device, protocol, policy, or requirement into a confirmed fact.
+- If the project is too large, proactively suggest a smaller V1.
+- Do not create or modify Project OS state yet. The project will only be materialized after /apply outside this AI turn.
+- Continue the discussion from the full transcript below. Answer the latest USER turn.
+
+TRANSCRIPT
+{transcript}
+"""
+
+
+def build_distiller_prompt(messages: list[dict]) -> str:
+    transcript = "\n\n".join(
+        f"{'USER' if m['role'] == 'user' else 'ASSISTANT'}:\n{m['content']}"
+        for m in messages
+    )
+    return f"""You are the Project Distiller for Team Project OS.
+The user has finished or paused a free-form project design conversation with an AI.
+Analyze the ENTIRE transcript once and convert it into one structured project proposal.
+
+AUTHORITY RULES
+- USER statements and explicit USER acceptances are authoritative.
+- ASSISTANT suggestions are NOT confirmed facts unless the USER accepted them or they are only used as clearly proposed/TBD items.
+- Do not invent budget, deadline, KPI target values, users, hardware, protocols, databases, cloud providers, policies, or requirements.
+- Unknown or unresolved facts go into pending.
+- You may create a neutral working project name from the confirmed topic if the user never named the project; if you do, add that naming decision to pending.
+- goal may summarize the user's confirmed intent without adding new scope.
+- Requirements must be traceable to explicit user intent or accepted design discussion.
+- Decisions should contain only confirmed decisions. Unaccepted alternatives belong in pending, not decisions.
+- Create process/architecture/dataflow only when supported by the conversation. Do not fabricate missing components.
+- Prefer a realistic V1 scope over an oversized project.
+
+OUTPUT
+Return exactly ONE JSON object and no markdown fence. Use this schema:
+{{
+  "reply": "short Korean summary for preview",
+  "project_updates": {{
+    "name": "working or confirmed project name",
+    "goal": "confirmed goal",
+    "project_type": "generic|software|ai_data|embedded_hardware|manufacturing_automation|research_rnd|business_process|product_service|education_content|event_campaign",
+    "problem": "",
+    "users": "",
+    "deliverables": "",
+    "success_criteria": "",
+    "scope": "",
+    "current_state": "",
+    "target_state": "",
+    "constraints": "",
+    "schedule": "",
+    "team": "",
+    "risks": "",
+    "description": ""
+  }},
+  "requirements": [
+    {{"ref":"REQ-001","title":"...","detail":"...","status":"defined"}}
+  ],
+  "decisions": [
+    {{"title":"...","body":"...","status":"accepted"}}
+  ],
+  "document_updates": [
+    {{"doc_type":"proposal|plan|milestone|backlog|requirements|service_policy|function_definition|ia|screen_design|system_architecture|data_flow|api_design|qa","content":"complete markdown when enough evidence exists","reason":"..."}}
+  ],
+  "design_updates": [
+    {{
+      "view":"process|architecture|dataflow",
+      "mode":"replace",
+      "reason":"...",
+      "nodes":[{{"key":"n1","label":"...","kind":"step|component|device|service|data|store","detail":"..."}}],
+      "edges":[{{"source":"n1","target":"n2","label":"..."}}]
+    }}
+  ],
+  "pending": ["unresolved facts, unaccepted alternatives, TBD decisions"]
+}}
+
+TRANSCRIPT
+{transcript}
+"""
+
+
+def distill_design(
+    provider: str,
+    messages: list[dict],
+    *,
+    cwd: Path,
+    custom_command: str | None = None,
+) -> tuple[dict, dict]:
+    if not any(m.get("role") == "user" for m in messages):
+        raise RuntimeError("아직 사용자와의 프로젝트 대화가 없습니다.")
+    result = run_provider(
+        provider,
+        build_distiller_prompt(messages),
+        cwd=cwd,
+        purpose="interview",
+        custom_command=custom_command,
+    )
+    if not result.ok:
+        detail = (result.stderr or result.stdout or "unknown provider error").strip()
+        raise RuntimeError(f"{provider} Distiller 실행 실패 (exit={result.returncode}): {detail[-3000:]}")
+    parsed = normalize_ai_result(result.stdout)
+    brief = merge_project_brief(blank_brief(), parsed.get("project_updates", {}))
+    return brief, parsed
+
+
+def preview_lines(brief: dict, pending: dict) -> list[str]:
+    quality = evaluate_intake(brief)
+    lines = [
+        "",
+        "=" * 62,
+        "Project OS 생성 미리보기",
+        "=" * 62,
+        f"프로젝트: {brief.get('name') or '(이름 미정)'}",
+        f"목표: {brief.get('goal') or '(목표 미정)'}",
+        f"유형: {brief.get('project_type') or 'generic'}",
+        f"정의 품질: {quality['score']}/100 ({quality['level']})",
+        f"요구사항: {len(pending.get('requirements', []))}개",
+        f"확정 Decision: {len(pending.get('decisions', []))}개",
+        f"문서 업데이트: {len(pending.get('document_updates', []))}개",
+        f"Canvas 설계: {len(pending.get('design_updates', []))}개",
+    ]
+    unresolved = pending.get("pending", [])
+    if unresolved:
+        lines.append("미결정/TBD:")
+        lines.extend(f"  - {item}" for item in unresolved[:12])
+    lines.append("=" * 62)
+    return lines
+
+
+def print_preview(brief: dict, pending: dict) -> None:
+    print("\n".join(preview_lines(brief, pending)))
 
 
 def apply_to_server(server: str, access_key: str, member: str, brief: dict, pending: dict) -> dict:
@@ -114,8 +218,8 @@ def apply_to_server(server: str, access_key: str, member: str, brief: dict, pend
             http_json("POST", f"{base}/api/projects/{pid}/decisions", {
                 "title": item["title"],
                 "body": item.get("body", ""),
-                "author": f"AI proposal / {member}",
-                "status": item.get("status", "proposed"),
+                "author": f"AI Distiller / {member}",
+                "status": item.get("status", "accepted"),
             }, access_key)
 
     snapshot = http_json("GET", f"{base}/api/projects/{pid}/snapshot", None, access_key)
@@ -126,7 +230,7 @@ def apply_to_server(server: str, access_key: str, member: str, brief: dict, pend
             http_json("PATCH", f"{base}/api/documents/{doc['id']}", {
                 "content": item["content"],
                 "status": "draft",
-                "updated_by": f"CMD AI / {member}",
+                "updated_by": f"Design Session / {member}",
             }, access_key)
 
     for design in pending.get("design_updates", []):
@@ -158,17 +262,49 @@ def apply_to_server(server: str, access_key: str, member: str, brief: dict, pend
     return project
 
 
-def interactive_create(args) -> int:
+def _session_file(args) -> Path:
+    explicit = getattr(args, "session_file", "") or ""
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    SESSION_ROOT.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return SESSION_ROOT / f"design-{stamp}-{args.provider}.json"
+
+
+def save_session(path: Path, *, provider: str, member: str, messages: list[dict], applied_project: dict | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "provider": provider,
+        "member": member,
+        "messages": messages,
+        "applied_project": applied_project,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def print_session_status(path: Path, provider: str, messages: list[dict]) -> None:
+    user_turns = sum(1 for m in messages if m.get("role") == "user")
+    assistant_turns = sum(1 for m in messages if m.get("role") == "assistant")
+    print("\nDesign Session: 프로젝트 미생성 상태")
+    print(f"AI Provider: {provider}")
+    print(f"대화: 사용자 {user_turns}턴 / AI {assistant_turns}턴")
+    print(f"세션 저장: {path}")
+    print("/preview 또는 /apply 시점에만 전체 대화를 프로젝트 구조로 변환합니다.")
+
+
+def interactive_design(args) -> int:
     provider = args.provider
     cwd = Path(args.cwd or ".").expanduser().resolve()
-    brief = blank_brief()
-    pending: dict = {}
-    messages = [{"role": "assistant", "content": WELCOME}]
+    if not cwd.exists() or not cwd.is_dir():
+        print(f"작업 폴더가 없습니다: {cwd}")
+        return 2
+    session_file = _session_file(args)
+    messages: list[dict] = []
+    preview_cache: tuple[int, dict, dict] | None = None
+
     print(WELCOME)
-    if args.initial:
-        queued = args.initial
-    else:
-        queued = None
+    print(f"AI: {provider} / 세션: {session_file}")
+    queued = args.initial or None
 
     while True:
         user_text = queued
@@ -177,90 +313,119 @@ def interactive_create(args) -> int:
             try:
                 user_text = input("\n나> ").strip()
             except (EOFError, KeyboardInterrupt):
-                print("\n종료합니다.")
+                save_session(session_file, provider=provider, member=args.member, messages=messages)
+                print("\n세션을 저장하고 종료합니다.")
                 return 0
         if not user_text:
             continue
-        if user_text.lower() in {"/quit", "/exit"}:
+
+        command = user_text.lower()
+        if command in {"/quit", "/exit"}:
+            save_session(session_file, provider=provider, member=args.member, messages=messages)
+            print(f"세션 저장: {session_file}")
             return 0
-        if user_text.lower() == "/status":
-            print_status(brief, pending)
+        if command == "/status":
+            print_session_status(session_file, provider, messages)
             continue
-        if user_text.lower() == "/apply":
+        if command in {"/preview", "/apply"}:
+            version = len(messages)
+            try:
+                if preview_cache and preview_cache[0] == version:
+                    _, brief, pending = preview_cache
+                else:
+                    print("\n전체 대화를 Project Distiller가 분석 중...")
+                    brief, pending = distill_design(
+                        provider,
+                        messages,
+                        cwd=cwd,
+                        custom_command=args.command or None,
+                    )
+                    preview_cache = (version, brief, pending)
+                print_preview(brief, pending)
+            except Exception as exc:
+                print(f"미리보기 생성 실패: {exc}")
+                continue
+
+            if command == "/preview":
+                print("아직 프로젝트는 생성되지 않았습니다. 계속 대화하거나 /apply 하세요.")
+                continue
+
             try:
                 project = apply_to_server(args.server, args.access_key, args.member, brief, pending)
             except Exception as exc:
-                print(f"생성 실패: {exc}")
+                print(f"프로젝트 생성 실패: {exc}")
                 continue
+            save_session(
+                session_file,
+                provider=provider,
+                member=args.member,
+                messages=messages,
+                applied_project=project,
+            )
             print(f"\n프로젝트 생성 완료: ID={project['id']} / {project['name']}")
             print(f"브라우저: {args.server.rstrip('/')}")
             return 0
 
         messages.append({"role": "user", "content": user_text})
-        prompt = build_interviewer_prompt(
-            project_id=0,
-            brief=brief,
-            messages=messages,
-            documents=document_context(brief),
-            previous_pending=pending,
-        )
+        preview_cache = None
         try:
             result = run_provider(
                 provider,
-                prompt,
+                build_design_chat_prompt(messages),
                 cwd=cwd,
                 purpose="interview",
                 custom_command=args.command or None,
             )
         except Exception as exc:
+            messages.pop()
             print(f"\n{provider} 실행 실패: {exc}")
             continue
 
         if not result.ok:
+            messages.pop()
             print(f"\n{provider} 실행 실패 (exit={result.returncode})")
-            if result.stderr.strip():
-                print(result.stderr.strip())
-            elif result.stdout.strip():
-                print(result.stdout.strip())
+            print((result.stderr or result.stdout or "").strip())
             continue
 
-        try:
-            parsed = normalize_ai_result(result.stdout)
-        except Exception as exc:
-            print(f"\nAI 응답 JSON 해석 실패: {exc}")
-            print("원본 응답:")
-            print(result.stdout[-4000:])
-            if result.stderr.strip():
-                print("진단:")
-                print(result.stderr[-2000:])
+        answer = result.stdout.strip()
+        if not answer:
+            messages.pop()
+            print("\nAI 응답이 비어 있습니다.")
             continue
+        messages.append({"role": "assistant", "content": answer})
+        save_session(session_file, provider=provider, member=args.member, messages=messages)
+        print(f"\n{provider}> {answer}")
 
-        pending = combine_proposals(pending, parsed)
-        brief = merge_project_brief(brief, parsed.get("project_updates", {}))
-        messages.append({"role": "assistant", "content": parsed["reply"]})
-        print(f"\nAI Project Interviewer> {parsed['reply']}")
+
+interactive_create = interactive_design
+
+
+def _add_design_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--provider", choices=SUPPORTED_PROVIDERS, default="codex")
+    parser.add_argument("--server", default="http://localhost:8000")
+    parser.add_argument("--member", default="CMD User")
+    parser.add_argument("--access-key", default="")
+    parser.add_argument("--cwd", default=".")
+    parser.add_argument("--command", default="", help="Custom CLI template; prefer {prompt_file}")
+    parser.add_argument("--initial", default="", help="첫 아이디어를 바로 전달")
+    parser.add_argument("--session-file", default="", help="Design Session 저장 파일 경로")
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Team Project OS CMD Project Creator")
+    parser = argparse.ArgumentParser(description="Team Project OS AI Design Session")
     sub = parser.add_subparsers(dest="sub", required=True)
 
-    c = sub.add_parser("create", help="AI와 CMD에서 대화하며 프로젝트 생성")
-    c.add_argument("--provider", choices=SUPPORTED_PROVIDERS, default="codex")
-    c.add_argument("--server", default="http://localhost:8000")
-    c.add_argument("--member", default="CMD User")
-    c.add_argument("--access-key", default="")
-    c.add_argument("--cwd", default=".")
-    c.add_argument("--command", default="", help="Custom CLI template; prefer {prompt_file}")
-    c.add_argument("--initial", default="", help="첫 메시지를 명령행에서 바로 전달")
-
+    d = sub.add_parser("design", help="AI와 충분히 대화한 뒤 /apply로 프로젝트 생성")
+    _add_design_args(d)
+    c = sub.add_parser("create", help="design 명령의 호환 별칭")
+    _add_design_args(c)
     sub.add_parser("doctor", help="로컬 AI CLI 설치 상태 확인")
 
     args = parser.parse_args(argv)
     if args.sub == "doctor":
         print_doctor()
         return 0
-    return interactive_create(args)
+    return interactive_design(args)
 
 
 if __name__ == "__main__":
