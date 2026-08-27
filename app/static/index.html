@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Team Project OS</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">P</div>
+        <div><strong>Project OS</strong><span>Human + BYOAI</span></div>
+      </div>
+      <div class="project-select-wrap">
+        <label for="projectSelect">프로젝트</label>
+        <select id="projectSelect"></select>
+      </div>
+      <nav id="nav">
+        <button class="nav-item active" data-view="overview">◫ <span>Overview</span></button>
+        <button class="nav-item" data-view="definition">◎ <span>Goal & Requirements</span></button>
+        <button class="nav-item" data-view="progress">▥ <span>Progress</span></button>
+        <div class="nav-group">DESIGN</div>
+        <button class="nav-item" data-view="process">⇢ <span>System Process</span></button>
+        <button class="nav-item" data-view="architecture">⌘ <span>Architecture</span></button>
+        <button class="nav-item" data-view="dataflow">↝ <span>Data Flow</span></button>
+        <div class="nav-group">COLLABORATION</div>
+        <button class="nav-item" data-view="ideas">✦ <span>Ideas & Decisions</span></button>
+        <button class="nav-item" data-view="team">◉ <span>Team & AI</span></button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="live-dot"></div><span id="liveText">공유 서버 연결 중</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">SHARED WORKSPACE</div>
+          <h1 id="pageTitle">Overview</h1>
+        </div>
+        <div class="top-actions">
+          <button id="accessKeyBtn" class="ghost-btn">접속키</button>
+          <button id="addBtn" class="primary-btn">+ 추가</button>
+        </div>
+      </header>
+      <section id="content" class="content"></section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div class="modal-head"><h2 id="modalTitle">추가</h2><button id="modalClose" class="icon-btn" aria-label="닫기">×</button></div>
+      <form id="modalForm" class="modal-body"></form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

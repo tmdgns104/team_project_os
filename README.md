@@ -36,7 +36,7 @@ AI가 없는 팀원도 그대로 사용할 수 있고, AI를 사용하는 팀원
              ┌──────────────┼──────────────┐
              │              │              │
           Team A          Team B          Team C
-             │              │
+             │              │              │
        Local Bridge    Local Bridge      AI 없음
              │              │
            Codex        Claude Code
@@ -321,3 +321,4 @@ V1의 `APP_ACCESS_KEY`는 데모/소규모 팀용 공유키입니다.
 8. Test/Git Evidence 자동 수집
 9. 프로젝트별 Knowledge/RAG
 10. Slack/Teams/Notion 연동
+
