@@ -294,6 +294,22 @@ def main():
     runp.add_argument("--poll", type=int, default=10)
     runp.add_argument("--command", default="")
     runp.set_defaults(func=run)
+
+    ar = sub.add_parser("assistant-register", help="Pair this machine/provider for conversational project setup")
+    ar.add_argument("--server", required=True)
+    ar.add_argument("--member", required=True)
+    ar.add_argument("--provider", required=True, choices=["codex", "claude", "opencode", "antigravity", "dry-run"])
+    ar.add_argument("--access-key", default="")
+    ar.add_argument("--command", default="", help="Optional custom CLI template; {prompt} may be used")
+    ar.set_defaults(func=assistant_register)
+
+    arp = sub.add_parser("assistant-run", help="Fetch and execute conversational Project Assistant jobs")
+    arp.add_argument("--cwd", default="")
+    arp.add_argument("--once", action="store_true")
+    arp.add_argument("--poll", type=int, default=10)
+    arp.add_argument("--command", default="")
+    arp.set_defaults(func=assistant_run)
+
     d = sub.add_parser("doctor", help="Detect installed AI CLIs")
     d.set_defaults(func=doctor)
     args = parser.parse_args()
