@@ -1,0 +1,45 @@
+name: Upgrade Professional Documents V0.11
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-professional-docs-v011.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply V0.11 upgrade
+        run: python scripts/upgrade_professional_documents_v011.py
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Python compile
+        run: python -m py_compile app/main.py app/project_intake.py tests/test_professional_documents.py
+      - name: Full regression
+        run: python -m unittest discover -s tests -v
+      - name: Existing Design Session simulator
+        run: python tools/simulate_design_session.py
+      - name: Existing Autofill simulator
+        run: python tools/simulate_autofill_project.py
+      - name: Existing Live Draft simulator
+        run: python tools/simulate_live_design.py
+      - name: JavaScript syntax
+        run: node --check app/static/app.js
+      - name: Commit V0.11 feature files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/main.py app/project_intake.py app/static/app.js app/static/styles.css tests/test_professional_documents.py README.md
+          git commit -m 'add professional deliverable document workspace V0.11 [skip ci]'
+          git push
