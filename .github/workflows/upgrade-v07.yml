@@ -30,33 +30,7 @@ jobs:
           python -c "from pathlib import Path; p=Path('app/main.py'); s=p.read_text(encoding='utf-8').replace('version=\"0.6.0\"','version=\"0.7.0\"').replace('\"version\": \"0.6.0\"','\"version\": \"0.7.0\"'); p.write_text(s,encoding='utf-8')"
           python -c "from pathlib import Path; p=Path('README.md'); s=p.read_text(encoding='utf-8'); s=s.replace('# Team Project OS V0.2','# Team Project OS V0.7',1) if s.startswith('# Team Project OS V0.2') else s; p.write_text(s,encoding='utf-8')"
           if ! grep -q '## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성' README.md; then
-            cat >> README.md <<'EOF'
-
----
-
-## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성
-
-V0.7부터 Local AI 실행은 Provider별 Adapter로 분리합니다. 긴 프로젝트 Prompt 전체를 Windows 명령줄 인자로 직접 넣지 않습니다.
-
-| Provider | 긴 Prompt 전달 방식 | 기본 명령 |
-|---|---|---|
-| Codex | stdin | `codex exec --skip-git-repo-check -` |
-| Claude Code | stdin + 짧은 `-p` 지시 | `claude -p ... --output-format text` |
-| OpenCode | 임시 UTF-8 prompt 파일 + 짧은 run 지시 | `opencode run ...` |
-| Antigravity CLI | 임시 UTF-8 prompt 파일 + headless print | `agy -p ... --output-format text` |
-
-CMD에서 웹을 거치지 않고 AI와 바로 프로젝트를 시작할 수 있습니다.
-
-```bat
-python project_os.py doctor
-python project_os.py server
-python project_os.py create --provider codex --server http://localhost:8000 --member "승훈"
-```
-
-대화 중 `/status`, `/apply`, `/quit`을 사용할 수 있습니다. `--provider`를 `claude`, `opencode`, `antigravity`로 바꾸면 같은 인터페이스를 사용합니다.
-
-CI는 Ubuntu와 Windows에서 가짜 Provider 실행 파일을 실제 subprocess로 실행해 한글/공백/여러 줄 Prompt 보존, Windows `.cmd` wrapper, stdout/stderr 분리, 구조화 JSON round-trip, CMD 프로젝트 생성 흐름을 검증합니다.
-EOF
+            python -c "from pathlib import Path; import base64; p=Path('README.md'); p.write_text(p.read_text(encoding='utf-8') + base64.b64decode('CgotLS0KCiMjIFYwLjcgLSBQcm92aWRlciBBZGFwdGVyIOyViOygle2ZlCArIENNRCDtlITroZzsoJ3tirgg7IOd7ISxCgpWMC4367aA7YSwIExvY2FsIEFJIOyLpO2WieydgCBQcm92aWRlcuuzhCBBZGFwdGVy66GcIOu2hOumrO2VqeuLiOuLpC4g6ri0IO2UhOuhnOygne2KuCBQcm9tcHQg7KCE7LK066W8IFdpbmRvd3Mg66qF66C57KSEIOyduOyekOuhnCDsp4HsoJEg64Sj7KeAIOyViuyKteuLiOuLpC4KCnwgUHJvdmlkZXIgfCDquLQgUHJvbXB0IOyghOuLrCDrsKnsi50gfCDquLDrs7gg66qF66C5IHwKfC0tLXwtLS18LS0tfAp8IENvZGV4IHwgc3RkaW4gfCBgY29kZXggZXhlYyAtLXNraXAtZ2l0LXJlcG8tY2hlY2sgLWAgfAp8IENsYXVkZSBDb2RlIHwgc3RkaW4gKyDsp6fsnYAgYC1wYCDsp4Dsi5wgfCBgY2xhdWRlIC1wIC4uLiAtLW91dHB1dC1mb3JtYXQgdGV4dGAgfAp8IE9wZW5Db2RlIHwg7J6E7IucIFVURi04IHByb21wdCDtjIzsnbwgKyDsp6fsnYAgcnVuIOyngOyLnCB8IGBvcGVuY29kZSBydW4gLi4uYCB8CnwgQW50aWdyYXZpdHkgQ0xJIHwg7J6E7IucIFVURi04IHByb21wdCDtjIzsnbwgKyBoZWFkbGVzcyBwcmludCB8IGBhZ3kgLXAgLi4uIC0tb3V0cHV0LWZvcm1hdCB0ZXh0YCB8CgpDTUTsl5DshJwg7Ju57J2EIOqxsOy5mOyngCDslYrqs6AgQUnsmYAg67CU66GcIO2UhOuhnOygne2KuOulvCDsi5zsnpHtlaAg7IiYIOyeiOyKteuLiOuLpC4KCmBgYGJhdApweXRob24gcHJvamVjdF9vcy5weSBkb2N0b3IKcHl0aG9uIHByb2plY3Rfb3MucHkgc2VydmVyCnB5dGhvbiBwcm9qZWN0X29zLnB5IGNyZWF0ZSAtLXByb3ZpZGVyIGNvZGV4IC0tc2VydmVyIGh0dHA6Ly9sb2NhbGhvc3Q6ODAwMCAtLW1lbWJlciAi7Iq57ZuIIgpgYGAKCuuMgO2ZlCDspJEgYC9zdGF0dXNgLCBgL2FwcGx5YCwgYC9xdWl0YOydhCDsgqzsmqntlaAg7IiYIOyeiOyKteuLiOuLpC4gYC0tcHJvdmlkZXJg66W8IGBjbGF1ZGVgLCBgb3BlbmNvZGVgLCBgYW50aWdyYXZpdHlg66GcIOuwlOq+uOuptCDqsJnsnYAg7J247YSw7Y6Y7J207Iqk66W8IOyCrOyaqe2VqeuLiOuLpC4KCkNJ64qUIFVidW50deyZgCBXaW5kb3dz7JeQ7IScIOqwgOynnCBQcm92aWRlciDsi6Ttlokg7YyM7J287J2EIOyLpOygnCBzdWJwcm9jZXNz66GcIOyLpO2Wie2VtCDtlZzquIAv6rO167CxL+yXrOufrCDspIQgUHJvbXB0IOuztOyhtCwgV2luZG93cyBgLmNtZGAgd3JhcHBlciwgc3Rkb3V0L3N0ZGVyciDrtoTrpqwsIOq1rOyhsO2ZlCBKU09OIHJvdW5kLXRyaXAsIENNRCDtlITroZzsoJ3tirgg7IOd7ISxIO2dkOumhOydhCDqsoDspp3tlanri4jri6QuCg==').decode('utf-8'), encoding='utf-8')"
           fi
           grep -qxF '.team_project_os_tmp/' .gitignore || printf '\n.team_project_os_tmp/\n' >> .gitignore
 
