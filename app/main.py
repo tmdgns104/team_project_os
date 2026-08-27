@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.project_intake import build_initial_documents, evaluate_intake, intake_metadata
+from app.conversation import build_interviewer_prompt, combine_proposals, merge_project_brief, normalize_ai_result
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.getenv("PROJECT_OS_DB", BASE_DIR / "project_os.db"))
@@ -25,7 +26,7 @@ ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
 SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.4.0")
+app = FastAPI(title="Team Project OS", version="0.5.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
@@ -202,6 +203,35 @@ class TraceLinkCreate(BaseModel):
     created_by: str = Field(default="Team member", max_length=120)
 
 
+class AssistantBridgeRegister(BaseModel):
+    member_name: str = Field(min_length=1, max_length=120)
+    provider: str = Field(min_length=2, max_length=40)
+    machine_name: str = Field(default="local", max_length=160)
+
+
+class ConversationStart(BaseModel):
+    member_name: str = Field(min_length=1, max_length=120)
+    provider: str = Field(min_length=2, max_length=40)
+    project_id: int | None = None
+
+
+class ConversationMessageCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=12000)
+
+
+class ConversationBridgeResult(BaseModel):
+    job_id: int
+    status: str
+    output: str = Field(default="", max_length=250000)
+
+
+class ConversationApply(BaseModel):
+    apply_project: bool = True
+    apply_requirements: bool = True
+    apply_decisions: bool = True
+    apply_documents: bool = True
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.connections: dict[int, set[WebSocket]] = {}
@@ -375,6 +405,49 @@ def init_db() -> None:
                 created_by TEXT NOT NULL DEFAULT 'Team member',
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS project_briefs (
+                project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                data_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS assistant_bridges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                machine_name TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                last_seen TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS conversation_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                member_name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                pending_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES conversation_sessions(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS conversation_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES conversation_sessions(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                member_name TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                bridge_id INTEGER REFERENCES assistant_bridges(id),
+                output TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         count = conn.execute("SELECT COUNT(*) AS c FROM projects").fetchone()["c"]
@@ -382,6 +455,7 @@ def init_db() -> None:
             seed_demo(conn)
         for project_row in conn.execute("SELECT id FROM projects"):
             ensure_project_documents(conn, project_row["id"])
+            ensure_project_brief(conn, project_row["id"])
 
 
 def ensure_project_documents(conn: sqlite3.Connection, project_id: int) -> None:
@@ -392,8 +466,85 @@ def ensure_project_documents(conn: sqlite3.Connection, project_id: int) -> None:
         )
 
 
+def ensure_project_brief(conn: sqlite3.Connection, project_id: int) -> dict[str, Any]:
+    row = conn.execute("SELECT data_json FROM project_briefs WHERE project_id=?", (project_id,)).fetchone()
+    if row:
+        try:
+            return json.loads(row["data_json"])
+        except json.JSONDecodeError:
+            pass
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not project:
+        raise ValueError("Project not found")
+    brief = {
+        "name": project["name"],
+        "goal": project["goal"],
+        "project_type": "generic",
+        "problem": "",
+        "users": "",
+        "deliverables": "",
+        "success_criteria": "",
+        "scope": "",
+        "current_state": "",
+        "target_state": "",
+        "constraints": "",
+        "schedule": "",
+        "team": "",
+        "risks": "",
+        "description": project["description"],
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO project_briefs(project_id,data_json,updated_at) VALUES(?,?,?)",
+        (project_id, json.dumps(brief, ensure_ascii=False), now()),
+    )
+    return brief
+
+
+def save_project_brief(conn: sqlite3.Connection, project_id: int, brief: dict[str, Any]) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO project_briefs(project_id,data_json,updated_at) VALUES(?,?,?)",
+        (project_id, json.dumps(brief, ensure_ascii=False), now()),
+    )
+
+
+def conversation_snapshot(conn: sqlite3.Connection, project_id: int) -> dict[str, Any] | None:
+    session = conn.execute(
+        "SELECT * FROM conversation_sessions WHERE project_id=? ORDER BY id DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    if not session:
+        return None
+    messages = [dict(r) for r in conn.execute(
+        "SELECT * FROM conversation_messages WHERE session_id=? ORDER BY id",
+        (session["id"],),
+    )]
+    jobs = [dict(r) for r in conn.execute(
+        "SELECT id,session_id,provider,member_name,status,created_at,updated_at FROM conversation_jobs WHERE session_id=? ORDER BY id DESC LIMIT 10",
+        (session["id"],),
+    )]
+    try:
+        pending = json.loads(session["pending_json"] or "{}")
+    except json.JSONDecodeError:
+        pending = {}
+    bridge = conn.execute(
+        "SELECT id,member_name,provider,machine_name,last_seen FROM assistant_bridges WHERE member_name=? AND provider=? ORDER BY id DESC LIMIT 1",
+        (session["member_name"], session["provider"]),
+    ).fetchone()
+    brief = ensure_project_brief(conn, project_id)
+    return {
+        "session": dict(session),
+        "messages": messages,
+        "jobs": jobs,
+        "pending": pending,
+        "bridge": dict(bridge) if bridge else None,
+        "quality": evaluate_intake(brief),
+    }
+
+
 def apply_project_brief_to_documents(conn: sqlite3.Connection, project_id: int, payload: ProjectCreate) -> None:
-    generated = build_initial_documents(payload.model_dump())
+    data = payload.model_dump()
+    save_project_brief(conn, project_id, data)
+    generated = build_initial_documents(data)
     for doc_type, content in generated.items():
         conn.execute(
             "UPDATE documents SET content=?,updated_by='Project Setup',updated_at=? WHERE project_id=? AND doc_type=?",
@@ -554,7 +705,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.4.0"}
+    return {"status": "ok", "version": "0.5.0"}
 
 
 @app.get("/api/project-intake/meta")
@@ -576,6 +727,255 @@ def project_intake_preview(payload: ProjectCreate, x_access_key: str | None = He
             "plan": generated["plan"],
         },
     }
+
+
+@app.post("/api/assistant-bridges/register")
+def register_assistant_bridge(payload: AssistantBridgeRegister, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    token = secrets.token_urlsafe(32)
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO assistant_bridges(member_name,provider,machine_name,token,last_seen,created_at) VALUES(?,?,?,?,?,?)",
+            (payload.member_name, payload.provider, payload.machine_name, token, now(), now()),
+        )
+    return {"bridge_id": cur.lastrowid, "token": token, "member_name": payload.member_name, "provider": payload.provider}
+
+
+@app.post("/api/conversations/start")
+async def start_conversation(payload: ConversationStart, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        if payload.project_id is not None:
+            project = conn.execute("SELECT * FROM projects WHERE id=?", (payload.project_id,)).fetchone()
+            if not project:
+                raise HTTPException(404, "Project not found")
+            pid = payload.project_id
+            ensure_project_brief(conn, pid)
+        else:
+            stamp = datetime.now().strftime("%m%d-%H%M")
+            cur = conn.execute(
+                "INSERT INTO projects(name,goal,description,created_at) VALUES(?,?,?,?)",
+                (f"AI 대화 프로젝트 {stamp}", "AI 대화로 프로젝트 목표 정의 중", "Conversational Project Setup draft", now()),
+            )
+            pid = cur.lastrowid
+            ensure_project_documents(conn, pid)
+            ensure_project_brief(conn, pid)
+        cur = conn.execute(
+            "INSERT INTO conversation_sessions(project_id,member_name,provider,status,pending_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (pid, payload.member_name, payload.provider, "active", "{}", now(), now()),
+        )
+        sid = cur.lastrowid
+        welcome = "프로젝트를 대화로 같이 정의해볼게요. 만들고 싶은 것을 편하게 설명해주세요. 소프트웨어가 아니어도 되고, 아직 정하지 못한 내용은 모른다고 해도 됩니다."
+        conn.execute(
+            "INSERT INTO conversation_messages(session_id,role,content,created_at) VALUES(?,?,?,?)",
+            (sid, "assistant", welcome, now()),
+        )
+        add_activity(conn, pid, "conversation", f"AI Project Interviewer 시작 ({payload.provider})", payload.member_name)
+        project = rowdict(conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
+        session = rowdict(conn.execute("SELECT * FROM conversation_sessions WHERE id=?", (sid,)).fetchone())
+    await manager.broadcast(pid, {"type": "refresh", "scope": "conversation"})
+    return {"project": project, "session": session, "welcome": welcome}
+
+
+@app.post("/api/conversations/{session_id}/messages")
+async def conversation_message(session_id: int, payload: ConversationMessageCreate, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        session = conn.execute("SELECT * FROM conversation_sessions WHERE id=?", (session_id,)).fetchone()
+        if not session:
+            raise HTTPException(404, "Conversation not found")
+        if session["status"] != "active":
+            raise HTTPException(409, "Conversation is not active")
+        conn.execute(
+            "INSERT INTO conversation_messages(session_id,role,content,created_at) VALUES(?,?,?,?)",
+            (session_id, "user", payload.message, now()),
+        )
+        messages = [dict(r) for r in conn.execute(
+            "SELECT role,content,created_at FROM conversation_messages WHERE session_id=? ORDER BY id",
+            (session_id,),
+        )]
+        brief = ensure_project_brief(conn, session["project_id"])
+        documents = [dict(r) for r in conn.execute(
+            "SELECT doc_type,title,content,status FROM documents WHERE project_id=? ORDER BY id",
+            (session["project_id"],),
+        )]
+        try:
+            pending = json.loads(session["pending_json"] or "{}")
+        except json.JSONDecodeError:
+            pending = {}
+        prompt = build_interviewer_prompt(
+            project_id=session["project_id"],
+            brief=brief,
+            messages=messages,
+            documents=documents,
+            previous_pending=pending,
+        )
+        cur = conn.execute(
+            "INSERT INTO conversation_jobs(session_id,provider,member_name,prompt,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (session_id, session["provider"], session["member_name"], prompt, "queued", now(), now()),
+        )
+        conn.execute("UPDATE conversation_sessions SET updated_at=? WHERE id=?", (now(), session_id))
+        job = rowdict(conn.execute("SELECT id,session_id,provider,member_name,status,created_at,updated_at FROM conversation_jobs WHERE id=?", (cur.lastrowid,)).fetchone())
+        pid = session["project_id"]
+    await manager.broadcast(pid, {"type": "refresh", "scope": "conversation"})
+    return {"job": job}
+
+
+@app.get("/api/assistant-bridge/jobs")
+def assistant_bridge_jobs(token: str = Query(...)):
+    with db() as conn:
+        bridge = conn.execute("SELECT * FROM assistant_bridges WHERE token=?", (token,)).fetchone()
+        if not bridge:
+            raise HTTPException(401, "Invalid assistant bridge token")
+        conn.execute("UPDATE assistant_bridges SET last_seen=? WHERE id=?", (now(), bridge["id"]))
+        job = conn.execute(
+            "SELECT * FROM conversation_jobs WHERE provider=? AND member_name=? AND status='queued' ORDER BY id LIMIT 1",
+            (bridge["provider"], bridge["member_name"]),
+        ).fetchone()
+        if not job:
+            return {"job": None}
+        conn.execute(
+            "UPDATE conversation_jobs SET status='claimed',bridge_id=?,updated_at=? WHERE id=?",
+            (bridge["id"], now(), job["id"]),
+        )
+        return {"job": {"id": job["id"], "session_id": job["session_id"], "provider": job["provider"], "member_name": job["member_name"]}, "prompt": job["prompt"]}
+
+
+@app.post("/api/assistant-bridge/results")
+async def assistant_bridge_result(payload: ConversationBridgeResult, token: str = Query(...)):
+    with db() as conn:
+        bridge = conn.execute("SELECT * FROM assistant_bridges WHERE token=?", (token,)).fetchone()
+        if not bridge:
+            raise HTTPException(401, "Invalid assistant bridge token")
+        job = conn.execute(
+            "SELECT * FROM conversation_jobs WHERE id=? AND bridge_id=?",
+            (payload.job_id, bridge["id"]),
+        ).fetchone()
+        if not job:
+            raise HTTPException(404, "Conversation job not found")
+        session = conn.execute("SELECT * FROM conversation_sessions WHERE id=?", (job["session_id"],)).fetchone()
+        if not session:
+            raise HTTPException(404, "Conversation session not found")
+        final_status = payload.status
+        assistant_text = payload.output[-12000:] if payload.output else "AI 응답이 비어 있습니다."
+        if payload.status == "completed":
+            try:
+                parsed = normalize_ai_result(payload.output)
+                try:
+                    previous = json.loads(session["pending_json"] or "{}")
+                except json.JSONDecodeError:
+                    previous = {}
+                pending = combine_proposals(previous, parsed)
+                assistant_text = parsed["reply"]
+                conn.execute(
+                    "UPDATE conversation_sessions SET pending_json=?,updated_at=? WHERE id=?",
+                    (json.dumps(pending, ensure_ascii=False), now(), session["id"]),
+                )
+            except Exception as exc:
+                final_status = "failed"
+                assistant_text = f"AI 응답을 Project OS 형식으로 해석하지 못했습니다: {exc}"
+        conn.execute(
+            "INSERT INTO conversation_messages(session_id,role,content,created_at) VALUES(?,?,?,?)",
+            (session["id"], "assistant", assistant_text, now()),
+        )
+        conn.execute(
+            "UPDATE conversation_jobs SET status=?,output=?,updated_at=? WHERE id=?",
+            (final_status, payload.output[-250000:], now(), job["id"]),
+        )
+        add_activity(conn, session["project_id"], "conversation", f"AI Project Interviewer 응답 ({final_status})", bridge["member_name"])
+        pid = session["project_id"]
+    await manager.broadcast(pid, {"type": "refresh", "scope": "conversation"})
+    return {"ok": True, "status": final_status}
+
+
+@app.post("/api/conversations/{session_id}/apply")
+async def apply_conversation(session_id: int, payload: ConversationApply, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        session = conn.execute("SELECT * FROM conversation_sessions WHERE id=?", (session_id,)).fetchone()
+        if not session:
+            raise HTTPException(404, "Conversation not found")
+        try:
+            pending = json.loads(session["pending_json"] or "{}")
+        except json.JSONDecodeError:
+            pending = {}
+        if not pending:
+            return {"ok": True, "applied": 0, "quality": evaluate_intake(ensure_project_brief(conn, session["project_id"]))}
+        pid = session["project_id"]
+        applied = 0
+        brief = ensure_project_brief(conn, pid)
+        if payload.apply_project:
+            brief = merge_project_brief(brief, pending.get("project_updates", {}))
+            save_project_brief(conn, pid, brief)
+            conn.execute(
+                "UPDATE projects SET name=?,goal=?,description=? WHERE id=?",
+                (brief.get("name") or "대화형 프로젝트", brief.get("goal") or "목표 정의 중", brief.get("description") or "", pid),
+            )
+            generated = build_initial_documents(brief)
+            for doc_type, content in generated.items():
+                doc = conn.execute("SELECT * FROM documents WHERE project_id=? AND doc_type=?", (pid, doc_type)).fetchone()
+                if not doc or doc["status"] != "draft" or doc["updated_by"] not in {"System", "Project Setup", "AI Conversation"}:
+                    continue
+                if doc["content"] != content:
+                    conn.execute(
+                        "INSERT INTO document_revisions(document_id,content,status,editor,created_at) VALUES(?,?,?,?,?)",
+                        (doc["id"], doc["content"], doc["status"], "AI Conversation", now()),
+                    )
+                    conn.execute(
+                        "UPDATE documents SET content=?,updated_by='AI Conversation',updated_at=? WHERE id=?",
+                        (content, now(), doc["id"]),
+                    )
+            applied += len(pending.get("project_updates", {}))
+
+        if payload.apply_requirements:
+            for item in pending.get("requirements", []):
+                ref = str(item.get("ref") or "").strip()
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    continue
+                full_title = f"{ref} {title}".strip()
+                exists = conn.execute("SELECT 1 FROM requirements WHERE project_id=? AND title=?", (pid, full_title)).fetchone()
+                if not exists:
+                    conn.execute(
+                        "INSERT INTO requirements(project_id,title,detail,status,created_at) VALUES(?,?,?,?,?)",
+                        (pid, full_title, item.get("detail") or "", item.get("status") or "defined", now()),
+                    )
+                    applied += 1
+
+        if payload.apply_decisions:
+            for item in pending.get("decisions", []):
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    continue
+                exists = conn.execute("SELECT 1 FROM decisions WHERE project_id=? AND title=?", (pid, title)).fetchone()
+                if not exists:
+                    conn.execute(
+                        "INSERT INTO decisions(project_id,title,body,author,status,created_at) VALUES(?,?,?,?,?,?)",
+                        (pid, title, item.get("body") or "", f"AI proposal / {session['member_name']}", item.get("status") or "proposed", now()),
+                    )
+                    applied += 1
+
+        if payload.apply_documents:
+            for item in pending.get("document_updates", []):
+                doc = conn.execute("SELECT * FROM documents WHERE project_id=? AND doc_type=?", (pid, item.get("doc_type"))).fetchone()
+                content = str(item.get("content") or "")
+                if not doc or not content:
+                    continue
+                conn.execute(
+                    "INSERT INTO document_revisions(document_id,content,status,editor,created_at) VALUES(?,?,?,?,?)",
+                    (doc["id"], doc["content"], doc["status"], "AI Conversation", now()),
+                )
+                conn.execute(
+                    "UPDATE documents SET content=?,updated_by=?,updated_at=? WHERE id=?",
+                    (content, f"AI Conversation / {session['member_name']}", now(), doc["id"]),
+                )
+                applied += 1
+
+        conn.execute("UPDATE conversation_sessions SET pending_json='{}',updated_at=? WHERE id=?", (now(), session_id))
+        add_activity(conn, pid, "conversation", f"대화 제안 {applied}개를 프로젝트에 적용", session["member_name"])
+        quality = evaluate_intake(ensure_project_brief(conn, pid))
+    await manager.broadcast(pid, {"type": "refresh", "scope": "conversation"})
+    return {"ok": True, "applied": applied, "quality": quality}
 
 
 @app.get("/api/projects", dependencies=[])
@@ -627,8 +1027,12 @@ def snapshot(project_id: int, x_access_key: str | None = Header(default=None)):
         progress = round((done / total) * 100) if total else 0
         trace_links = [dict(r) for r in conn.execute("SELECT * FROM trace_links WHERE project_id=? ORDER BY id DESC", (project_id,))]
         derived_links = derived_trace_links(tasks)
+        project_brief = ensure_project_brief(conn, project_id)
+        conversation = conversation_snapshot(conn, project_id)
         return {
             "project": project,
+            "project_brief": project_brief,
+            "conversation": conversation,
             "requirements": [dict(r) for r in conn.execute("SELECT * FROM requirements WHERE project_id=? ORDER BY id", (project_id,))],
             "tasks": tasks,
             "nodes": [dict(r) for r in conn.execute("SELECT * FROM nodes WHERE project_id=? ORDER BY id", (project_id,))],

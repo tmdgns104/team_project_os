@@ -376,3 +376,27 @@ Bridge 기본 실행은 `agy -p ... --output-format text --print-timeout 45m`이
 새 프로젝트 입력은 웹/API 개발에 한정되지 않습니다. 범용 프로젝트를 기본값으로 두고 소프트웨어, AI/데이터, 임베디드/하드웨어/IoT, 제조/자동화, 연구개발/PoC, 업무개선, 제품/서비스 기획, 교육/콘텐츠, 행사/캠페인까지 같은 Project OS에서 시작할 수 있습니다.
 
 프로젝트 생성 전 **작성 품질 점검**을 누르면 목표·문제·이해관계자·산출물·KPI·범위·제약의 구체성을 점수와 피드백으로 확인합니다. 프로젝트 유형별 추가 확인 질문도 제공합니다. 입력 내용은 기획서, 계획서, 요구사항 정의서, 마일스톤, 백로그의 초기 초안에 반영됩니다.
+
+
+## Conversational Project Setup (V0.5)
+
+AI를 사용하는 팀원은 프로젝트 입력 폼을 작성하지 않고 **AI와 대화만으로 새 프로젝트를 시작**할 수 있습니다.
+
+1. 웹에서 `AI와 새 프로젝트` 선택
+2. 내 이름 + Codex / Claude Code / OpenCode / Antigravity CLI 선택
+3. 최초 1회 Local Bridge를 서버에 `assistant-register`
+4. `assistant-run` 실행
+5. 프로젝트에 대해 자연스럽게 대화
+6. AI가 Project Brief / Requirement / Decision / 13종 문서 변경안을 구조화해 제안
+7. 웹에서 변경 Diff를 확인하고 `제안 적용`
+
+AI가 말한 내용은 자동으로 확정되지 않습니다. 응답(`reply`)과 프로젝트 변경 제안(`project_updates`, `requirements`, `decisions`, `document_updates`)이 분리되며, 사용자가 적용한 내용만 Source of Truth에 반영됩니다. 모르는 내용은 AI가 추측하지 않고 Pending/TBD로 남기도록 Prompt Contract를 고정했습니다.
+
+### 대화형 AI Connector
+
+```bash
+python local_bridge/bridge.py assistant-register --server http://SERVER:8000 --member "내 이름" --provider codex
+python local_bridge/bridge.py assistant-run
+```
+
+Provider는 `codex`, `claude`, `opencode`, `antigravity`를 지원합니다. 일반 Task 실행용 `register/run`과 프로젝트 대화용 `assistant-register/assistant-run`은 분리되어 있습니다.

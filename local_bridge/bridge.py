@@ -131,6 +131,82 @@ def register(args):
     print("Next: python local_bridge/bridge.py run --repo <your-repository-path> --once")
 
 
+def assistant_register(args):
+    access_headers = {"X-Access-Key": args.access_key} if args.access_key else {}
+    data = http_json(
+        "POST",
+        f"{args.server.rstrip('/')}/api/assistant-bridges/register",
+        {"member_name": args.member, "provider": args.provider, "machine_name": platform.node() or "local"},
+        access_headers,
+    )
+    cfg = load_config()
+    cfg.update({
+        "assistant_server": args.server.rstrip('/'),
+        "assistant_member": args.member,
+        "assistant_provider": args.provider,
+        "assistant_token": data["token"],
+        "assistant_access_key": args.access_key or "",
+        "assistant_command": args.command or "",
+    })
+    save_config(cfg)
+    print(f"AI Project Assistant paired: {args.member} / {args.provider}")
+    print(f"Config saved: {CONFIG_PATH}")
+    print("Next: python local_bridge/bridge.py assistant-run --once")
+
+
+def assistant_submit_result(cfg: dict, job_id: int, status: str, output: str):
+    q = urlencode({"token": cfg["assistant_token"]})
+    http_json("POST", f"{cfg['assistant_server']}/api/assistant-bridge/results?{q}", {
+        "job_id": job_id, "status": status, "output": output
+    })
+
+
+def assistant_run_once(cfg: dict, cwd: Path, custom_command: str | None = None) -> bool:
+    q = urlencode({"token": cfg["assistant_token"]})
+    bundle = http_json("GET", f"{cfg['assistant_server']}/api/assistant-bridge/jobs?{q}")
+    if not bundle or not bundle.get("job"):
+        print("No queued Project Assistant message.")
+        return False
+    job = bundle["job"]
+    prompt = bundle["prompt"]
+    provider = cfg["assistant_provider"]
+    cmd = provider_command(provider, prompt, custom_command or cfg.get("assistant_command") or None)
+    print(f"Claimed Project Assistant Job #{job['id']} / {provider}")
+    try:
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=60 * 45)
+        output = (result.stdout or "") + ("\nSTDERR:\n" + result.stderr if result.stderr else "")
+        status = "completed" if result.returncode == 0 else "failed"
+        assistant_submit_result(cfg, job["id"], status, output)
+        print(f"Assistant Job #{job['id']} -> {status}")
+        return True
+    except Exception as exc:
+        assistant_submit_result(cfg, job["id"], "failed", str(exc))
+        raise
+
+
+def assistant_run(args):
+    cfg = load_config()
+    required = ["assistant_server", "assistant_token", "assistant_provider"]
+    if any(not cfg.get(k) for k in required):
+        raise RuntimeError("Project Assistant is not paired. Run assistant-register first.")
+    cwd = Path(args.cwd or ".").expanduser().resolve()
+    if not cwd.exists() or not cwd.is_dir():
+        raise RuntimeError(f"Working directory not found: {cwd}")
+    if args.once:
+        assistant_run_once(cfg, cwd, args.command)
+        return
+    print(f"Watching AI Project Assistant every {args.poll}s. Ctrl+C to stop.")
+    while True:
+        try:
+            ran = assistant_run_once(cfg, cwd, args.command)
+            time.sleep(1 if ran else args.poll)
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            print(f"Assistant bridge error: {exc}", file=sys.stderr)
+            time.sleep(args.poll)
+
+
 def submit_result(cfg, job_id: int, status: str, output: str, evidence: str):
     q = urlencode({"token": cfg["token"]})
     http_json("POST", f"{cfg['server']}/api/bridge/results?{q}", {

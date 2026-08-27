@@ -3,7 +3,7 @@ const state = {
   accessKey: localStorage.getItem('project_os_access_key') || ''
 };
 const titles = {
-  overview:'Overview', definition:'Goal & Requirements', documents:'Project Documents', traceability:'Traceability', progress:'Development Progress',
+  overview:'Overview', definition:'Goal & Requirements', assistant:'AI Project Assistant', documents:'Project Documents', traceability:'Traceability', progress:'Development Progress',
   process:'System Process', architecture:'Architecture', dataflow:'Data Flow',
   ideas:'Ideas & Decisions', team:'Team & AI'
 };
@@ -24,6 +24,7 @@ function statusChip(status){
 async function init(){
   bindNav();
   $('#newProjectBtn').addEventListener('click', newProject);
+  $('#aiStartBtn').addEventListener('click', ()=>startAIProject(false));
   $('#accessKeyBtn').addEventListener('click', setAccessKey);
   $('#addBtn').addEventListener('click', openAddForView);
   $('#modalClose').addEventListener('click', closeModal);
@@ -62,8 +63,8 @@ function setAccessKey(){
   if(v===null) return; state.accessKey=v.trim(); localStorage.setItem('project_os_access_key',state.accessKey); loadProjects().catch(e=>toast(e.message));
 }
 function render(){
-  if(!state.snapshot){ $('#content').innerHTML='<div class="panel onboarding"><h2>새 프로젝트를 시작하세요</h2><p class="muted">기획부터 설계, 개발, QA까지 팀이 같은 Workspace에서 진행할 수 있습니다.</p><button class="primary-btn" data-action="new-project">+ 프로젝트 생성</button></div>'; bindViewActions(); return; }
-  const fn={overview:renderOverview,definition:renderDefinition,documents:renderDocuments,traceability:renderTraceability,progress:renderProgress,process:()=>renderDiagram('process'),architecture:()=>renderDiagram('architecture'),dataflow:()=>renderDiagram('dataflow'),ideas:renderIdeas,team:renderTeam}[state.view];
+  if(!state.snapshot){ $('#content').innerHTML='<div class="panel onboarding"><h2>새 프로젝트를 시작하세요</h2><p class="muted">AI가 있으면 대화만으로 시작하고, 없으면 직접 입력할 수 있습니다.</p><div class="onboarding-actions"><button class="primary-btn" data-action="start-ai-project">✦ AI와 대화하며 시작</button><button class="ghost-btn" data-action="new-project">직접 입력해서 시작</button></div></div>'; bindViewActions(); return; }
+  const fn={overview:renderOverview,definition:renderDefinition,assistant:renderAssistant,documents:renderDocuments,traceability:renderTraceability,progress:renderProgress,process:()=>renderDiagram('process'),architecture:()=>renderDiagram('architecture'),dataflow:()=>renderDiagram('dataflow'),ideas:renderIdeas,team:renderTeam}[state.view];
   $('#content').innerHTML=fn(); bindViewActions();
 }
 function renderOverview(){
@@ -89,6 +90,37 @@ function renderDefinition(){
   <div class="panel"><h3>설계 준비도</h3><p class="muted">요구사항 → 프로세스 → 아키텍처 → 데이터 흐름 → Task가 연결될수록 프로젝트 상태를 이해하기 쉬워집니다.</p><div class="progress-track"><div class="progress-fill" style="width:${Math.min(100,45+s.requirements.length*8)}%"></div></div></div></div>
   <div class="panel" style="margin-top:18px"><div style="display:flex;justify-content:space-between;align-items:center"><h3>Requirements</h3><button class="mini-btn" data-action="add-requirement">+ 요구사항</button></div><div class="req-list">${s.requirements.map(r=>`<div class="req"><div style="display:flex;justify-content:space-between;gap:10px"><strong>${esc(r.title)}</strong>${statusChip(r.status)}</div><div class="muted">${esc(r.detail)}</div></div>`).join('')}</div></div>`;
 }
+function renderAssistant(){
+  const s=state.snapshot; const conv=s.conversation;
+  if(!conv){
+    return `<div class="panel onboarding"><div class="eyebrow">CONVERSATIONAL PROJECT SETUP</div><h2>이 프로젝트를 AI와 대화하며 정리</h2><p class="muted">Codex, Claude Code, OpenCode, Antigravity CLI 중 자신의 AI를 연결할 수 있습니다. AI가 제안한 내용은 승인 전까지 프로젝트에 적용되지 않습니다.</p><button class="primary-btn" data-action="start-assistant-current">✦ AI Project Interviewer 시작</button></div>`;
+  }
+  const session=conv.session, pending=conv.pending||{}, updates=pending.project_updates||{}, quality=conv.quality||{};
+  const fields=Object.entries(s.project_brief||{});
+  const hasPending=Object.keys(updates).length || (pending.requirements||[]).length || (pending.decisions||[]).length || (pending.document_updates||[]).length;
+  const messages=(conv.messages||[]).map(m=>`<div class="chat-message ${m.role==='user'?'user':'assistant'}"><div class="chat-role">${m.role==='user'?'나':'AI Project Interviewer'}</div><div>${esc(m.content).replace(/\n/g,'<br>')}</div></div>`).join('');
+  const proposalRows=Object.entries(updates).map(([k,v])=>`<div class="proposal-row"><strong>${esc(k)}</strong><span>${esc(v)}</span></div>`).join('');
+  const reqs=(pending.requirements||[]).map(r=>`<div class="proposal-row"><strong>${esc(r.ref||'REQ')} ${esc(r.title)}</strong><span>${esc(r.detail||'')}</span></div>`).join('');
+  const decisions=(pending.decisions||[]).map(d=>`<div class="proposal-row"><strong>Decision · ${esc(d.title)}</strong><span>${esc(d.body||'')}</span></div>`).join('');
+  const docs=(pending.document_updates||[]).map(d=>`<div class="proposal-row"><strong>Document · ${esc(d.doc_type)}</strong><span>${esc(d.reason||'문서 수정 제안')}</span></div>`).join('');
+  const missing=fields.filter(([k,v])=>!String(v||'').trim()).slice(0,8).map(([k])=>`<span class="chip">${esc(k)} 미정</span>`).join(' ');
+  const bridge=conv.bridge;
+  const latestJob=(conv.jobs||[])[0];
+  return `<div class="assistant-layout">
+    <div class="panel assistant-chat">
+      <div class="assistant-head"><div><div class="eyebrow">${esc(session.provider)} · ${esc(session.member_name)}</div><h2>AI와 프로젝트 정의</h2></div>${latestJob?statusChip(latestJob.status):''}</div>
+      <div class="chat-messages" id="chatMessages">${messages}</div>
+      <form id="conversationForm" class="chat-input"><textarea name="message" placeholder="편하게 말하세요. 예: 공장에서 수작업으로 하던 검사를 자동화하고 싶어" required></textarea><button class="primary-btn" type="submit">전송</button></form>
+      <small class="muted">AI는 답변과 변경 제안만 생성합니다. 아래 '제안 적용' 전에는 프로젝트 문서/요구사항을 확정 변경하지 않습니다.</small>
+    </div>
+    <div class="assistant-side">
+      <div class="panel"><div class="eyebrow">PROJECT DEFINITION</div><h3>정의 품질 ${quality.score??0}점</h3><div class="progress-track"><div class="progress-fill" style="width:${quality.score??0}%"></div></div><div class="missing-fields">${missing||'<span class="chip good">핵심 정의 충실</span>'}</div></div>
+      <div class="panel"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3>AI 변경 제안</h3>${hasPending?'<button class="primary-btn" data-action="apply-conversation">제안 적용</button>':''}</div>${hasPending?(proposalRows+reqs+decisions+docs):'<div class="empty">아직 적용 대기 중인 제안이 없습니다.</div>'}${(pending.pending||[]).length?`<div class="notice"><strong>아직 미정</strong><ul>${pending.pending.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}</div>
+      <div class="panel"><h3>Local AI Connector</h3>${bridge?`<div class="notice">✓ ${esc(bridge.member_name)} / ${esc(bridge.provider)} 연결됨<br><small>${esc(bridge.machine_name)} · ${new Date(bridge.last_seen).toLocaleString('ko-KR')}</small></div>`:'<div class="notice">이 AI 계정의 Connector가 아직 감지되지 않았습니다.</div>'}<button class="ghost-btn" data-action="assistant-pair-help">연결 명령 보기</button></div>
+    </div>
+  </div>`;
+}
+
 function renderDocuments(){
   const s=state.snapshot;
   if(!s.documents?.length) return '<div class="empty">프로젝트 문서가 없습니다.</div>';
@@ -144,6 +176,8 @@ function bindViewActions(){
   document.querySelectorAll('[data-task-id]').forEach(c=>c.addEventListener('click',()=>editTask(Number(c.dataset.taskId))));
   document.querySelectorAll('[data-document-id]').forEach(c=>c.addEventListener('click',()=>{state.selectedDocumentId=Number(c.dataset.documentId);render();}));
   const commentForm=$('#documentCommentForm'); if(commentForm) commentForm.addEventListener('submit',submitDocumentComment);
+  const conversationForm=$('#conversationForm'); if(conversationForm) conversationForm.addEventListener('submit',submitConversationMessage);
+  const chat=$('#chatMessages'); if(chat) chat.scrollTop=chat.scrollHeight;
 }
 function closeModal(){ $('#modal').classList.add('hidden'); }
 function openModal(title, html, onSubmit){
@@ -157,12 +191,44 @@ function guidedTextarea(name,label,hint,example,value=''){
   return `<div class="field intake-field"><label>${esc(label)}</label><small class="field-hint">${esc(hint)}</small><textarea name="${name}" placeholder="${esc(example)}">${esc(value)}</textarea></div>`;
 }
 function selectField(name,label,options,current=''){ return `<div class="field"><label>${esc(label)}</label><select name="${name}">${options.map(([v,t])=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(t)}</option>`).join('')}</select></div>`; }
-function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',documents:'document-help',traceability:'add-trace-link',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
+function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',assistant:'start-assistant-current',documents:'document-help',traceability:'add-trace-link',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
 function handleAction(action, view){
-  if(action==='new-project') return newProject(); if(action==='add-task') return addTask(); if(action==='add-requirement') return addRequirement(); if(action==='edit-goal') return editGoal();
+  if(action==='new-project') return newProject(); if(action==='start-ai-project') return startAIProject(false); if(action==='start-assistant-current') return startAIProject(true); if(action==='apply-conversation') return applyConversation(); if(action==='assistant-pair-help') return assistantPairHelp(); if(action==='add-task') return addTask(); if(action==='add-requirement') return addRequirement(); if(action==='edit-goal') return editGoal();
   if(action==='save-document') return saveDocument(); if(action==='document-help') return documentHelp(); if(action==='export-project') return exportProject(); if(action==='export-document') return exportDocument(); if(action==='add-trace-link') return addTraceLink(); if(action==='delete-trace') return deleteTrace(view);
   if(action==='add-node') return addNode(view); if(action==='add-edge') return addEdge(view); if(action==='add-idea') return addIdea(); if(action==='add-decision') return addDecision(); if(action==='add-member') return addMember(); if(action==='add-ai-job') return addAIJob(); if(action==='bridge-help') return bridgeHelp();
 }
+function startAIProject(useCurrent=false){
+  const providers=[['codex','Codex'],['claude','Claude Code'],['opencode','OpenCode'],['antigravity','Antigravity CLI']];
+  openModal(useCurrent?'이 프로젝트에서 AI 대화 시작':'AI와 새 프로젝트 시작',
+    `<div class="notice">프로젝트 내용을 폼으로 작성할 필요가 없습니다. 자신의 AI Provider와 이름만 선택한 뒤, 다음 화면에서 AI에게 만들고 싶은 프로젝트를 말하면 됩니다.</div>`+
+    field('member_name','내 이름','Team member')+selectField('provider','사용할 개인 AI',providers,'codex'),async fd=>{
+      const data=Object.fromEntries(fd); if(useCurrent) data.project_id=state.projectId;
+      const started=await api('/api/conversations/start',{method:'POST',body:JSON.stringify(data)});
+      state.projectId=started.project.id; await loadProjects(); connectWs(); state.view='assistant';
+      document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view==='assistant')); $('#pageTitle').textContent=titles.assistant;
+    });
+}
+
+async function submitConversationMessage(e){
+  e.preventDefault(); const fd=new FormData(e.currentTarget); const message=String(fd.get('message')||'').trim(); if(!message)return;
+  const sid=state.snapshot.conversation?.session?.id; if(!sid)return;
+  await api(`/api/conversations/${sid}/messages`,{method:'POST',body:JSON.stringify({message})}); e.currentTarget.reset(); await loadSnapshot(); toast('AI에 전달했습니다. Connector가 응답하면 자동으로 갱신됩니다.');
+}
+
+async function applyConversation(){
+  const sid=state.snapshot.conversation?.session?.id; if(!sid)return;
+  const result=await api(`/api/conversations/${sid}/apply`,{method:'POST',body:JSON.stringify({})}); await loadProjects(); await loadSnapshot(); toast(`${result.applied}개 제안을 적용했습니다. 정의 품질 ${result.quality.score}점`);
+}
+
+function assistantPairHelp(){
+  const c=state.snapshot.conversation; if(!c)return;
+  const member=c.session.member_name, provider=c.session.provider;
+  const access=state.accessKey?` --access-key "${state.accessKey}"`:'';
+  const register=`python local_bridge/bridge.py assistant-register --server ${location.origin} --member "${member}" --provider ${provider}${access}`;
+  const run=`python local_bridge/bridge.py assistant-run`;
+  openModal('AI Project Assistant Connector',`<div class="notice">프로젝트별로 다시 등록할 필요가 없습니다. 이 서버에 내 AI를 한 번 Pair하면 이후 대화형 프로젝트에서도 같은 Connector를 사용할 수 있습니다.</div><label>1. 최초 1회 Pair</label><div class="code-line">${esc(register)}</div><label>2. 대화 수신 실행</label><div class="code-line">${esc(run)}</div><div class="notice">Codex / Claude Code / OpenCode / Antigravity CLI는 먼저 각 CLI에서 로그인되어 있어야 합니다.</div>`,async()=>({}));
+}
+
 function newProject(){
   const types=[
     ['generic','범용 프로젝트'],['software','소프트웨어 / 앱 / 시스템'],['ai_data','AI / 데이터'],
