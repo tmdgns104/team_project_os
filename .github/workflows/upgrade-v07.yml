@@ -1,0 +1,106 @@
+name: Upgrade Team Project OS v0.7
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-v07.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore verified V0.7 payload
+        shell: bash
+        run: |
+          cat .upgrade_v07/part_* > /tmp/v07.b64
+          test "$(wc -c < /tmp/v07.b64)" -eq 20548
+          base64 -d /tmp/v07.b64 > /tmp/v07.zip
+          echo '92d8bd10e8cf41e2f442e3d80ec98a913bdc2eafa712412a3e4ebcf30b917966  /tmp/v07.zip' | sha256sum -c -
+          unzip -o /tmp/v07.zip -d .
+
+      - name: Update version and documentation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          main = Path('app/main.py')
+          text = main.read_text(encoding='utf-8')
+          text = text.replace('version="0.6.0"', 'version="0.7.0"')
+          text = text.replace('"version": "0.6.0"', '"version": "0.7.0"')
+          main.write_text(text, encoding='utf-8')
+
+          readme = Path('README.md')
+          r = readme.read_text(encoding='utf-8')
+          if r.startswith('# Team Project OS V0.2'):
+              r = r.replace('# Team Project OS V0.2', '# Team Project OS V0.7', 1)
+          section = r'''
+
+---
+
+## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성
+
+V0.7부터 Local AI 실행은 Provider별 Adapter로 분리합니다.
+
+| Provider | 긴 Prompt 전달 방식 | 기본 명령 |
+|---|---|---|
+| Codex | stdin | `codex exec --skip-git-repo-check -` (Project Interviewer) |
+| Claude Code | stdin + 짧은 `-p` 지시 | `claude -p ... --output-format text` |
+| OpenCode | 임시 UTF-8 prompt 파일 + 짧은 run 지시 | `opencode run ...` |
+| Antigravity CLI | 임시 UTF-8 prompt 파일 + headless print | `agy -p ... --output-format text` |
+
+전체 프로젝트 Prompt를 Windows 명령줄 인자로 직접 넣지 않기 때문에 긴 한글 Prompt, 공백, 줄바꿈, npm `.cmd` wrapper에서 발생하던 인자 분리 문제를 피합니다. 성공한 AI 응답은 stdout만 Project OS JSON parser에 전달하고 stderr 진단 출력은 분리합니다.
+
+### CMD에서 AI와 바로 프로젝트 만들기
+
+```bat
+python project_os.py doctor
+python project_os.py server
+python project_os.py create --provider codex --server http://localhost:8000 --member "승훈"
+```
+
+대화 중 `/status`, `/apply`, `/quit`을 사용할 수 있습니다. Claude Code, OpenCode, Antigravity도 `--provider`만 변경하면 같은 인터페이스를 사용합니다.
+
+CI는 Ubuntu와 Windows에서 가짜 `codex`, `claude`, `opencode`, `agy`를 실제 subprocess로 실행해 한글/공백/여러 줄 Prompt 보존, Windows `.cmd` wrapper, stdout/stderr 분리, 구조화 JSON round-trip, CMD 프로젝트 생성 흐름을 검증합니다.
+'''
+          if '## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성' not in r:
+              r += section
+          readme.write_text(r, encoding='utf-8')
+
+          gi = Path('.gitignore')
+          g = gi.read_text(encoding='utf-8')
+          if '.team_project_os_tmp/' not in g:
+              g = g.rstrip() + '\n.team_project_os_tmp/\n'
+          gi.write_text(g, encoding='utf-8')
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify V0.7 before commit
+        run: |
+          python -m pip install -r requirements.txt
+          python -m py_compile app/main.py app/conversation.py local_bridge/providers.py local_bridge/bridge.py local_bridge/project_cli.py project_os.py
+          python -m unittest discover -s tests -v
+          python local_bridge/bridge.py -h
+          python project_os.py -h
+          node --check app/static/app.js
+
+      - name: Remove upgrade transport and commit source
+        shell: bash
+        run: |
+          rm -rf .upgrade_v07
+          rm -f .github/workflows/upgrade-v07.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'add provider adapters and CMD project creation'
+          git push
