@@ -36,6 +36,15 @@ class ProviderResult:
         return self.returncode == 0
 
 
+def _utf8_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    # Python-based wrappers/custom CLIs otherwise inherit legacy Windows code pages
+    # when stdout/stderr are redirected. These variables are harmless for Node/Rust CLIs.
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
 def _resolve_executable(executable: str) -> str:
     direct = Path(executable)
     if direct.is_file():
@@ -201,6 +210,7 @@ def run_provider(
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_utf8_subprocess_env(),
             timeout=timeout_seconds,
         )
         return ProviderResult(
@@ -239,6 +249,7 @@ def doctor() -> list[dict[str, str | bool]]:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env=_utf8_subprocess_env(),
                 timeout=10,
             )
             first = ((p.stdout or p.stderr).strip().splitlines() or [""])[0]
