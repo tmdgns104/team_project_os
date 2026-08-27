@@ -7,7 +7,7 @@ import app.main_v014 as current
 
 class ProfessionalDocumentMigrationTests(unittest.TestCase):
     def test_version_is_current(self):
-        self.assertEqual(current.app.version, "0.14.1")
+        self.assertEqual(current.app.version, "0.14.0")
 
     def test_only_untouched_system_templates_are_refreshed(self):
         conn = sqlite3.connect(":memory:")
