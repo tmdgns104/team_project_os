@@ -1,12 +1,13 @@
 import sqlite3
 import unittest
 
-from app.main import DOCUMENT_TEMPLATES, app, ensure_project_documents
+from app import main as base
+import app.main_v014 as current
 
 
 class ProfessionalDocumentMigrationTests(unittest.TestCase):
-    def test_version_is_v013(self):
-        self.assertEqual(app.version, "0.13.0")
+    def test_version_is_current(self):
+        self.assertEqual(current.app.version, "0.14.1")
 
     def test_only_untouched_system_templates_are_refreshed(self):
         conn = sqlite3.connect(":memory:")
@@ -27,13 +28,13 @@ class ProfessionalDocumentMigrationTests(unittest.TestCase):
         """)
         conn.execute("INSERT INTO documents(project_id,doc_type,title,content,status,updated_by,created_at,updated_at) VALUES(1,'service_policy','서비스 및 운영 정책서','OLD SYSTEM','draft','System','x','x')")
         conn.execute("INSERT INTO documents(project_id,doc_type,title,content,status,updated_by,created_at,updated_at) VALUES(1,'screen_design','화면 설계서','KEEP LIVE WORK','draft','Live Design / user','x','x')")
-        ensure_project_documents(conn, 1)
+        base.ensure_project_documents(conn, 1)
         policy = conn.execute("SELECT * FROM documents WHERE project_id=1 AND doc_type='service_policy'").fetchone()
         screen = conn.execute("SELECT * FROM documents WHERE project_id=1 AND doc_type='screen_design'").fetchone()
         self.assertNotEqual(policy['content'], 'OLD SYSTEM')
-        self.assertIn('사용자 / 역할 / 권한 정책', policy['content'])
+        self.assertIn('Role / Access Policy', policy['content'])
         self.assertEqual(screen['content'], 'KEEP LIVE WORK')
-        self.assertEqual(conn.execute("SELECT COUNT(*) c FROM documents WHERE project_id=1").fetchone()['c'], len(DOCUMENT_TEMPLATES))
+        self.assertEqual(conn.execute("SELECT COUNT(*) c FROM documents WHERE project_id=1").fetchone()['c'], len(base.DOCUMENT_TEMPLATES))
         conn.close()
 
 
