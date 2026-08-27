@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from local_bridge.bridge import provider_command
+from local_bridge.bridge import prepare_local_command, provider_command
 
 
 class BridgeProviderTests(unittest.TestCase):
@@ -13,6 +13,10 @@ class BridgeProviderTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("assistant-register", result.stdout)
         self.assertIn("assistant-run", result.stdout)
+
+    def test_prepare_local_command_reports_missing_cli(self):
+        with self.assertRaisesRegex(RuntimeError, "Local CLI not found"):
+            prepare_local_command(["definitely-not-a-real-project-os-cli-xyz", "--version"])
 
     def test_antigravity_headless_command(self):
         cmd = provider_command("antigravity", "do the task")

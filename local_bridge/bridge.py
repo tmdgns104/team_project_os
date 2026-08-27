@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
+import shutil
 import shlex
 import subprocess
 import sys
@@ -37,6 +39,25 @@ def load_config() -> dict:
 
 def save_config(data: dict) -> None:
     CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def prepare_local_command(cmd: list[str]) -> list[str]:
+    """Resolve local CLI executables and make Windows .cmd/.bat launch reliable."""
+    if not cmd:
+        raise RuntimeError("Empty local command")
+    executable = cmd[0]
+    resolved = executable if Path(executable).is_file() else shutil.which(executable)
+    if not resolved:
+        raise RuntimeError(
+            f"Local CLI not found: {executable}. "
+            f"Run 'python local_bridge/bridge.py doctor' and 'where {executable}' on Windows, "
+            "or register again with --command using the full executable path."
+        )
+    resolved_cmd = [resolved, *cmd[1:]]
+    if platform.system() == "Windows" and Path(resolved).suffix.lower() in {".cmd", ".bat"}:
+        comspec = os.environ.get("COMSPEC") or shutil.which("cmd.exe") or "cmd.exe"
+        return [comspec, "/d", "/s", "/c", subprocess.list2cmdline(resolved_cmd)]
+    return resolved_cmd
 
 
 def build_prompt(bundle: dict) -> str:
@@ -173,7 +194,8 @@ def assistant_run_once(cfg: dict, cwd: Path, custom_command: str | None = None) 
     cmd = provider_command(provider, prompt, custom_command or cfg.get("assistant_command") or None)
     print(f"Claimed Project Assistant Job #{job['id']} / {provider}")
     try:
-        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=60 * 45)
+        launch_cmd = prepare_local_command(cmd)
+        result = subprocess.run(launch_cmd, cwd=cwd, capture_output=True, text=True, timeout=60 * 45)
         output = (result.stdout or "") + ("\nSTDERR:\n" + result.stderr if result.stderr else "")
         status = "completed" if result.returncode == 0 else "failed"
         assistant_submit_result(cfg, job["id"], status, output)
@@ -227,7 +249,8 @@ def run_once(cfg: dict, repo: Path, custom_command: str | None = None) -> bool:
     print(f"Claimed AI Job #{job['id']} / Task #{job['task_id']} / {provider}")
     print(f"Repository: {repo}")
     try:
-        result = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, timeout=60 * 45)
+        launch_cmd = prepare_local_command(cmd)
+        result = subprocess.run(launch_cmd, cwd=repo, capture_output=True, text=True, timeout=60 * 45)
         output = (result.stdout or "") + ("\nSTDERR:\n" + result.stderr if result.stderr else "")
         status = "completed" if result.returncode == 0 else "failed"
         evidence = f"provider={provider}; returncode={result.returncode}; repo={repo}"
@@ -269,11 +292,13 @@ def doctor(_args):
     print(f"Config: {CONFIG_PATH} {'OK' if cfg else 'NOT REGISTERED'}")
     for name, cmd in [("Codex", ["codex", "--version"]), ("Claude Code", ["claude", "--version"]), ("OpenCode", ["opencode", "--version"]), ("Antigravity CLI", ["agy", "--version"])]:
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+            launch_cmd = prepare_local_command(cmd)
+            p = subprocess.run(launch_cmd, capture_output=True, text=True, timeout=8)
             text = (p.stdout or p.stderr).strip().splitlines()
-            print(f"{name}: {'OK' if p.returncode == 0 else 'ERROR'} {text[0] if text else ''}")
-        except Exception:
-            print(f"{name}: not detected")
+            resolved = shutil.which(cmd[0]) or cmd[0]
+            print(f"{name}: {'OK' if p.returncode == 0 else 'ERROR'} {text[0] if text else ''} [{resolved}]")
+        except Exception as exc:
+            print(f"{name}: not detected ({exc})")
 
 
 def main():
