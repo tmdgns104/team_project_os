@@ -1,0 +1,56 @@
+name: Upgrade Team Project OS v0.2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-v02.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  restore-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore verified source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .upgrade_chunks_v02/part_* > /tmp/team_project_os_v02.b64
+          test "$(wc -c < /tmp/team_project_os_v02.b64)" -eq 47960
+          base64 --decode /tmp/team_project_os_v02.b64 > /tmp/team_project_os_v02.zip
+          echo "26964b9c3d801c3fd290fbce238ff38518bda53cc4aa6b45bfa5be8fbccddfd7  /tmp/team_project_os_v02.zip" | sha256sum -c -
+          rm -rf /tmp/team_project_os_v02
+          mkdir -p /tmp/team_project_os_v02
+          unzip -q /tmp/team_project_os_v02.zip -d /tmp/team_project_os_v02
+          cp -a /tmp/team_project_os_v02/. .
+          rm -rf .upgrade_chunks_v02
+
+      - name: Verify source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile app/main.py local_bridge/bridge.py tests/test_smoke.py tests/test_bridge.py tests/test_documents.py
+          pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          node --check app/static/app.js
+          grep -q "Antigravity CLI" docs/ANTIGRAVITY_CLI.md
+          grep -q "DOCUMENT_TEMPLATES" app/main.py
+
+      - name: Commit v0.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git commit -m 'add shared project documents and Antigravity CLI support [skip ci]'
+          git push
