@@ -26,7 +26,7 @@ ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
 SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.10.0")
+app = FastAPI(title="Team Project OS", version="0.11.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
@@ -475,11 +475,28 @@ def init_db() -> None:
 
 
 def ensure_project_documents(conn: sqlite3.Connection, project_id: int) -> None:
+    """Ensure all shared deliverables exist and safely refresh untouched System templates.
+
+    A document already touched by Live Design, Project Setup, AI Conversation, or a human
+    is never overwritten here. This lets old V0.10 databases receive the professional
+    V0.11 baseline for still-untouched documents without losing project work.
+    """
     for doc_type, title, content in DOCUMENT_TEMPLATES:
-        conn.execute(
-            "INSERT OR IGNORE INTO documents(project_id,doc_type,title,content,status,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-            (project_id, doc_type, title, content, "draft", "System", now(), now()),
-        )
+        row = conn.execute(
+            "SELECT id,status,updated_by,content FROM documents WHERE project_id=? AND doc_type=?",
+            (project_id, doc_type),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO documents(project_id,doc_type,title,content,status,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (project_id, doc_type, title, content, "draft", "System", now(), now()),
+            )
+            continue
+        if row["status"] == "draft" and row["updated_by"] == "System" and row["content"] != content:
+            conn.execute(
+                "UPDATE documents SET title=?,content=?,updated_at=? WHERE id=?",
+                (title, content, now(), row["id"]),
+            )
 
 
 def ensure_project_brief(conn: sqlite3.Connection, project_id: int) -> dict[str, Any]:
@@ -869,7 +886,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.10.0"}
+    return {"status": "ok", "version": "0.11.0"}
 
 
 @app.get("/api/project-intake/meta")
