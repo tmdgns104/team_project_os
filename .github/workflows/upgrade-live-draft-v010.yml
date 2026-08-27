@@ -50,4 +50,4 @@ jobs:
           git commit -m 'add live AI design draft synchronization V0.10 [skip ci]'
           git push
 
-# retry after generated-source escaping fix
+# retry after simplified patch repair
