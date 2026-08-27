@@ -25,6 +25,7 @@ async function init(){
   bindNav();
   $('#newProjectBtn').addEventListener('click', newProject);
   $('#aiStartBtn').addEventListener('click', ()=>startAIProject(false));
+  $('#deleteProjectBtn').addEventListener('click', deleteCurrentProject);
   $('#accessKeyBtn').addEventListener('click', setAccessKey);
   $('#addBtn').addEventListener('click', openAddForView);
   $('#modalClose').addEventListener('click', closeModal);
@@ -45,6 +46,7 @@ async function loadProjects(){
   if(state.projectId && !state.projects.some(p=>p.id===state.projectId)) state.projectId=null;
   if(!state.projectId && state.projects[0]) state.projectId=state.projects[0].id;
   select.value=state.projectId||'';
+  $('#deleteProjectBtn').disabled=!state.projectId;
   select.onchange=async()=>{ state.projectId=Number(select.value); await loadSnapshot(); connectWs(); };
   if(state.projectId){ await loadSnapshot(); connectWs(); } else { state.snapshot=null; render(); }
 }
@@ -97,12 +99,13 @@ function renderAssistant(){
   }
   const session=conv.session, pending=conv.pending||{}, updates=pending.project_updates||{}, quality=conv.quality||{};
   const fields=Object.entries(s.project_brief||{});
-  const hasPending=Object.keys(updates).length || (pending.requirements||[]).length || (pending.decisions||[]).length || (pending.document_updates||[]).length;
+  const hasPending=Object.keys(updates).length || (pending.requirements||[]).length || (pending.decisions||[]).length || (pending.document_updates||[]).length || (pending.design_updates||[]).length;
   const messages=(conv.messages||[]).map(m=>`<div class="chat-message ${m.role==='user'?'user':'assistant'}"><div class="chat-role">${m.role==='user'?'나':'AI Project Interviewer'}</div><div>${esc(m.content).replace(/\n/g,'<br>')}</div></div>`).join('');
   const proposalRows=Object.entries(updates).map(([k,v])=>`<div class="proposal-row"><strong>${esc(k)}</strong><span>${esc(v)}</span></div>`).join('');
   const reqs=(pending.requirements||[]).map(r=>`<div class="proposal-row"><strong>${esc(r.ref||'REQ')} ${esc(r.title)}</strong><span>${esc(r.detail||'')}</span></div>`).join('');
   const decisions=(pending.decisions||[]).map(d=>`<div class="proposal-row"><strong>Decision · ${esc(d.title)}</strong><span>${esc(d.body||'')}</span></div>`).join('');
   const docs=(pending.document_updates||[]).map(d=>`<div class="proposal-row"><strong>Document · ${esc(d.doc_type)}</strong><span>${esc(d.reason||'문서 수정 제안')}</span></div>`).join('');
+  const designs=(pending.design_updates||[]).map(d=>`<div class="proposal-row design-proposal"><strong>Canvas · ${esc(d.view)} · ${esc(d.mode||'merge')}</strong><span>${esc(d.reason||'대화 기반 설계 제안')}<br><small>노드 ${(d.nodes||[]).length}개 · 연결 ${(d.edges||[]).length}개 · ${(d.nodes||[]).map(n=>esc(n.label)).join(' → ')}</small></span></div>`).join('');
   const missing=fields.filter(([k,v])=>!String(v||'').trim()).slice(0,8).map(([k])=>`<span class="chip">${esc(k)} 미정</span>`).join(' ');
   const bridge=conv.bridge;
   const latestJob=(conv.jobs||[])[0];
@@ -115,7 +118,7 @@ function renderAssistant(){
     </div>
     <div class="assistant-side">
       <div class="panel"><div class="eyebrow">PROJECT DEFINITION</div><h3>정의 품질 ${quality.score??0}점</h3><div class="progress-track"><div class="progress-fill" style="width:${quality.score??0}%"></div></div><div class="missing-fields">${missing||'<span class="chip good">핵심 정의 충실</span>'}</div></div>
-      <div class="panel"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3>AI 변경 제안</h3>${hasPending?'<button class="primary-btn" data-action="apply-conversation">제안 적용</button>':''}</div>${hasPending?(proposalRows+reqs+decisions+docs):'<div class="empty">아직 적용 대기 중인 제안이 없습니다.</div>'}${(pending.pending||[]).length?`<div class="notice"><strong>아직 미정</strong><ul>${pending.pending.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}</div>
+      <div class="panel"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3>AI 변경 제안</h3>${hasPending?'<button class="primary-btn" data-action="apply-conversation">제안 적용</button>':''}</div>${hasPending?(proposalRows+reqs+decisions+docs+designs):'<div class="empty">아직 적용 대기 중인 제안이 없습니다.</div>'}${(pending.pending||[]).length?`<div class="notice"><strong>아직 미정</strong><ul>${pending.pending.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}</div>
       <div class="panel"><h3>Local AI Connector</h3>${bridge?`<div class="notice">✓ ${esc(bridge.member_name)} / ${esc(bridge.provider)} 연결됨<br><small>${esc(bridge.machine_name)} · ${new Date(bridge.last_seen).toLocaleString('ko-KR')}</small></div>`:'<div class="notice">이 AI 계정의 Connector가 아직 감지되지 않았습니다.</div>'}<button class="ghost-btn" data-action="assistant-pair-help">연결 명령 보기</button></div>
     </div>
   </div>`;
@@ -218,6 +221,22 @@ async function submitConversationMessage(e){
 async function applyConversation(){
   const sid=state.snapshot.conversation?.session?.id; if(!sid)return;
   const result=await api(`/api/conversations/${sid}/apply`,{method:'POST',body:JSON.stringify({})}); await loadProjects(); await loadSnapshot(); toast(`${result.applied}개 제안을 적용했습니다. 정의 품질 ${result.quality.score}점`);
+}
+
+async function deleteCurrentProject(){
+  if(!state.projectId || !state.snapshot?.project) return;
+  const name=state.snapshot.project.name;
+  const typed=prompt(`프로젝트를 영구 삭제합니다.\n문서, Task, Canvas, 대화 기록 등 이 프로젝트의 데이터가 함께 삭제됩니다.\n\n삭제하려면 프로젝트 이름을 정확히 입력하세요:\n${name}`);
+  if(typed===null) return;
+  if(typed!==name){ toast('프로젝트 이름이 일치하지 않아 삭제하지 않았습니다.'); return; }
+  if(!confirm(`정말 "${name}" 프로젝트를 영구 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
+  try{
+    await api(`/api/projects/${state.projectId}?confirm_name=${encodeURIComponent(name)}`,{method:'DELETE'});
+    if(state.ws){ state.ws.close(); state.ws=null; }
+    state.projectId=null; state.snapshot=null; state.selectedDocumentId=null;
+    await loadProjects();
+    toast('프로젝트를 삭제했습니다.');
+  }catch(err){ toast(err.message); }
 }
 
 function assistantPairHelp(){

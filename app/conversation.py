@@ -23,6 +23,8 @@ PROJECT_FIELDS = (
     "description",
 )
 
+ALLOWED_DIAGRAM_VIEWS = {"process", "architecture", "dataflow"}
+
 ALLOWED_DOCUMENT_TYPES = {
     "proposal",
     "plan",
@@ -139,6 +141,54 @@ def normalize_ai_result(text: str) -> dict[str, Any]:
                 "reason": _clip(item.get("reason"), 1000),
             })
 
+    design_updates = []
+    for item in data.get("design_updates", []) if isinstance(data.get("design_updates"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        view = _clip(item.get("view"), 40)
+        if view not in ALLOWED_DIAGRAM_VIEWS:
+            continue
+        mode = _clip(item.get("mode") or "merge", 20)
+        if mode not in {"merge", "replace"}:
+            mode = "merge"
+        nodes = []
+        node_keys = set()
+        for node in item.get("nodes", []) if isinstance(item.get("nodes"), list) else []:
+            if not isinstance(node, dict):
+                continue
+            key = _clip(node.get("key"), 80)
+            label = _clip(node.get("label"), 200)
+            if not key or not label or key in node_keys:
+                continue
+            node_keys.add(key)
+            nodes.append({
+                "key": key,
+                "label": label,
+                "kind": _clip(node.get("kind") or "component", 80),
+                "detail": _clip(node.get("detail"), 2000),
+            })
+        edges = []
+        for edge in item.get("edges", []) if isinstance(item.get("edges"), list) else []:
+            if not isinstance(edge, dict):
+                continue
+            source = _clip(edge.get("source"), 80)
+            target = _clip(edge.get("target"), 80)
+            if source not in node_keys or target not in node_keys or source == target:
+                continue
+            edges.append({
+                "source": source,
+                "target": target,
+                "label": _clip(edge.get("label"), 300),
+            })
+        if nodes:
+            design_updates.append({
+                "view": view,
+                "mode": mode,
+                "reason": _clip(item.get("reason"), 1000),
+                "nodes": nodes[:40],
+                "edges": edges[:80],
+            })
+
     pending = []
     for item in data.get("pending", []) if isinstance(data.get("pending"), list) else []:
         value = _clip(item, 1000)
@@ -151,6 +201,7 @@ def normalize_ai_result(text: str) -> dict[str, Any]:
         "requirements": requirements[:30],
         "decisions": decisions[:20],
         "document_updates": document_updates[:13],
+        "design_updates": design_updates[:3],
         "pending": pending[:20],
     }
 
@@ -163,6 +214,7 @@ def combine_proposals(previous: dict[str, Any] | None, current: dict[str, Any]) 
         "requirements": [],
         "decisions": [],
         "document_updates": [],
+        "design_updates": [],
         "pending": [],
     }
 
@@ -180,6 +232,7 @@ def combine_proposals(previous: dict[str, Any] | None, current: dict[str, Any]) 
     merged["requirements"] = merge_list("requirements", lambda x: x.get("ref") or x.get("title"))[-30:]
     merged["decisions"] = merge_list("decisions", lambda x: x.get("title"))[-20:]
     merged["document_updates"] = merge_list("document_updates", lambda x: x.get("doc_type"))[-13:]
+    merged["design_updates"] = merge_list("design_updates", lambda x: x.get("view"))[-3:]
     pending_seen = []
     for item in [*old.get("pending", []), *current.get("pending", [])]:
         if item and item not in pending_seen:
@@ -235,6 +288,8 @@ MISSION
 - Do not ask again for information already present unless there is a contradiction.
 - If the user corrects earlier information, propose the corrected value.
 - If the user asks to write or revise a project document, you may propose a complete replacement for that document in document_updates.
+- When the conversation supports a system flow or technical structure, propose System Process, Architecture, and/or Data Flow as node/edge graphs in design_updates. Do not invent components, protocols, data, or ordering that the user did not state or reasonably confirm.
+- Diagram proposals are NOT approved until the human applies them. Prefer mode=merge unless the user explicitly asks to replace/redesign the current view.
 - Do NOT edit files, run commands, browse, or change a repository. This turn is conversation + structured JSON only.
 - AI suggestions are proposals, not approved project facts. The server will show a diff and the human decides what to apply.
 
@@ -288,6 +343,15 @@ Return exactly ONE JSON object and nothing else. No markdown fence.
   ],
   "document_updates": [
     {{"doc_type":"proposal|plan|milestone|backlog|requirements|service_policy|function_definition|ia|screen_design|system_architecture|data_flow|api_design|qa", "content":"complete markdown content only when the user asked to write/update this document", "reason":"why"}}
+  ],
+  "design_updates": [
+    {{
+      "view":"process|architecture|dataflow",
+      "mode":"merge|replace",
+      "reason":"why this graph follows from the conversation",
+      "nodes":[{{"key":"stable-short-key", "label":"visible node label", "kind":"step|component|service|database|device|source|sink|other", "detail":"known detail only"}}],
+      "edges":[{{"source":"node-key", "target":"node-key", "label":"sequence/protocol/data label if known"}}]
+    }}
   ],
   "pending": ["facts or decisions that are still unknown and worth resolving"]
 }}

@@ -25,3 +25,5 @@ button,input,textarea,select{font:inherit}.app-shell{display:grid;grid-template-
 .chat-input{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;border-top:1px solid #e7eaf0;padding-top:14px}.chat-input textarea{min-height:78px;resize:vertical}
 .assistant-side{display:flex;flex-direction:column;gap:18px}.proposal-row{display:flex;flex-direction:column;gap:4px;padding:10px 0;border-bottom:1px solid #edf0f4}.proposal-row span{font-size:13px;color:#667085;white-space:pre-wrap}.missing-fields{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
 @media(max-width:1050px){.assistant-layout{grid-template-columns:1fr}.chat-messages{max-height:50vh}}
+
+.danger-btn{border:1px solid #d66;background:#fff;color:#a22;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}.danger-btn:hover{background:#fff5f5}.danger-btn:disabled{opacity:.45;cursor:not-allowed}.design-proposal small{display:block;margin-top:5px;color:#748095;line-height:1.45}

@@ -400,3 +400,14 @@ python local_bridge/bridge.py assistant-run
 ```
 
 Provider는 `codex`, `claude`, `opencode`, `antigravity`를 지원합니다. 일반 Task 실행용 `register/run`과 프로젝트 대화용 `assistant-register/assistant-run`은 분리되어 있습니다.
+
+
+## Conversational Visual Design (V0.6)
+
+AI Project Assistant 대화에서 **System Process / Architecture / Data Flow**를 `node + edge` 구조로 제안할 수 있습니다. 제안은 `pending` 상태로만 보관되며 사용자가 **제안 적용**을 누르기 전에는 Canvas를 변경하지 않습니다. 승인 시 `merge` 또는 `replace` 모드에 따라 Canvas 노드/연결을 생성하고 자동 위치를 배정합니다.
+
+예: 사용자가 `센서 감지 → 카메라 촬영 → AI 판정 → PLC 배출 → 결과 저장`이라고 설명하면 AI는 Process 노드/연결을 제안하고, 사용자가 승인하면 System Process Canvas에 실제 그래프로 반영할 수 있습니다. Protocol/Data label이 확인된 경우 Data Flow edge label에도 반영합니다. 모르는 구성요소나 통신방식은 추측하지 않고 Pending으로 남깁니다.
+
+### Project Delete
+
+상단 `프로젝트 삭제` 버튼으로 현재 프로젝트를 영구 삭제할 수 있습니다. 실수를 막기 위해 프로젝트 이름을 정확히 다시 입력하고 마지막 확인을 거쳐야 합니다. 삭제 시 SQLite foreign-key cascade에 따라 해당 프로젝트의 문서/revision/comment, Requirement/Task, Canvas node/edge, Traceability, Idea/Decision, Project Brief, Conversation/AI Job 등이 함께 제거됩니다.

@@ -26,7 +26,7 @@ ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
 SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.5.0")
+app = FastAPI(title="Team Project OS", version="0.6.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
@@ -705,7 +705,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.5.0"}
+    return {"status": "ok", "version": "0.6.0"}
 
 
 @app.get("/api/project-intake/meta")
@@ -971,6 +971,54 @@ async def apply_conversation(session_id: int, payload: ConversationApply, x_acce
                 )
                 applied += 1
 
+        # Visual design proposals are only materialized after this human Apply action.
+        for design in pending.get("design_updates", []):
+            view = str(design.get("view") or "")
+            if view not in {"process", "architecture", "dataflow"}:
+                continue
+            mode = str(design.get("mode") or "merge")
+            if mode == "replace":
+                conn.execute("DELETE FROM edges WHERE project_id=? AND view=?", (pid, view))
+                conn.execute("DELETE FROM nodes WHERE project_id=? AND view=?", (pid, view))
+
+            existing = {
+                r["label"]: r["id"]
+                for r in conn.execute("SELECT id,label FROM nodes WHERE project_id=? AND view=?", (pid, view))
+            }
+            key_to_id: dict[str, int] = {}
+            for idx, node in enumerate(design.get("nodes", [])):
+                key = str(node.get("key") or "").strip()
+                label = str(node.get("label") or "").strip()
+                if not key or not label:
+                    continue
+                node_id = existing.get(label) if mode == "merge" else None
+                if node_id is None:
+                    cur = conn.execute(
+                        "INSERT INTO nodes(project_id,view,label,kind,detail,x,y) VALUES(?,?,?,?,?,?,?)",
+                        (pid, view, label, node.get("kind") or "component", node.get("detail") or "", 80 + (idx % 4) * 220, 80 + (idx // 4) * 150),
+                    )
+                    node_id = cur.lastrowid
+                    existing[label] = node_id
+                    applied += 1
+                key_to_id[key] = node_id
+
+            for edge in design.get("edges", []):
+                source_id = key_to_id.get(str(edge.get("source") or ""))
+                target_id = key_to_id.get(str(edge.get("target") or ""))
+                if not source_id or not target_id or source_id == target_id:
+                    continue
+                label = str(edge.get("label") or "")
+                duplicate = conn.execute(
+                    "SELECT 1 FROM edges WHERE project_id=? AND view=? AND source_id=? AND target_id=? AND label=?",
+                    (pid, view, source_id, target_id, label),
+                ).fetchone()
+                if not duplicate:
+                    conn.execute(
+                        "INSERT INTO edges(project_id,view,source_id,target_id,label) VALUES(?,?,?,?,?)",
+                        (pid, view, source_id, target_id, label),
+                    )
+                    applied += 1
+
         conn.execute("UPDATE conversation_sessions SET pending_json='{}',updated_at=? WHERE id=?", (now(), session_id))
         add_activity(conn, pid, "conversation", f"대화 제안 {applied}개를 프로젝트에 적용", session["member_name"])
         quality = evaluate_intake(ensure_project_brief(conn, pid))
@@ -1002,6 +1050,21 @@ async def create_project(payload: ProjectCreate, x_access_key: str | None = Head
         if project is not None:
             project["intake_quality"] = quality
     return project
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: int, confirm_name: str = Query(...), x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        project = conn.execute("SELECT id,name FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(404, "Project not found")
+        if confirm_name != project["name"]:
+            raise HTTPException(400, "Project name confirmation does not match")
+        deleted_name = project["name"]
+        conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+    await manager.broadcast(project_id, {"type": "project_deleted", "project_id": project_id})
+    return {"ok": True, "deleted_project_id": project_id, "deleted_name": deleted_name}
 
 
 @app.patch("/api/projects/{project_id}/goal")
