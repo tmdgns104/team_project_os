@@ -27,13 +27,16 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Python compile
-        run: python -m py_compile app/main.py app/conversation.py local_bridge/providers.py local_bridge/bridge.py local_bridge/project_cli.py project_os.py
+        run: python -m py_compile app/main.py app/conversation.py local_bridge/providers.py local_bridge/bridge.py local_bridge/project_cli.py project_os.py tools/simulate_design_session.py
       - name: Full regression including provider simulations
         run: python -m unittest discover -s tests -v
+      - name: Design Session materialization simulator
+        run: python tools/simulate_design_session.py
       - name: CLI help smoke
         run: |
           python local_bridge/bridge.py -h
           python project_os.py -h
+          python project_os.py design -h
           python project_os.py create -h
       - name: JavaScript syntax
         run: node --check app/static/app.js
