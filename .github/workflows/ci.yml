@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.12"]
     runs-on: ${{ matrix.os }}
     steps:
@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Python compile
-        run: python -m py_compile app/main.py app/project_intake.py app/conversation.py local_bridge/providers.py local_bridge/bridge.py local_bridge/project_cli.py project_os.py tools/simulate_design_session.py tools/simulate_autofill_project.py tools/simulate_live_design.py tools/simulate_project_creation_v012.py tools/simulate_milestone_gantt_v013.py tests/test_live_design.py tests/test_professional_documents.py tests/test_professional_doc_migration.py
+        run: python -m py_compile app/main.py app/main_v014.py app/delivery_documents.py app/live_state.py app/project_intake.py app/conversation.py local_bridge/providers.py local_bridge/providers_v014.py local_bridge/bridge.py local_bridge/project_cli.py local_bridge/project_cli_v014.py project_os.py run_project_os.py tools/simulate_design_session.py tools/simulate_autofill_project.py tools/simulate_live_design.py tools/simulate_project_creation_v012.py tools/simulate_milestone_gantt_v013.py tools/simulate_full_project_v014.py tests/test_live_design.py tests/test_professional_documents.py tests/test_professional_doc_migration.py tests/test_v014_hardening.py
       - name: Full regression including provider simulations
         run: python -m unittest discover -s tests -v
       - name: Diagram layout readability tests
@@ -40,10 +40,18 @@ jobs:
         run: python tools/simulate_autofill_project.py
       - name: Live Design Draft simulator
         run: python tools/simulate_live_design.py
-      - name: Full project documents and diagrams simulator
+      - name: V0.12 full documents and diagrams simulator
         run: python tools/simulate_project_creation_v012.py
       - name: Milestone Gantt project simulator
         run: python tools/simulate_milestone_gantt_v013.py
+      - name: V0.14 full project + professional docs + diagrams + live-sync simulator
+        run: python tools/simulate_full_project_v014.py
+      - name: Cross-platform launcher smoke
+        run: python run_project_os.py --check
+      - name: POSIX/macOS launcher syntax
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash -n run_mac.sh
       - name: CLI help smoke
         run: |
           python local_bridge/bridge.py -h
