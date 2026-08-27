@@ -217,16 +217,46 @@ function renderProgress(){
   const cols=[['todo','예정'],['in_progress','진행중'],['review','검토'],['done','완료']];
   return `<div class="notice" style="margin-bottom:14px">AI 사용 여부와 관계없이 모든 작업은 같은 Task 상태와 Evidence 기준으로 표시됩니다. Task 카드를 누르면 상태를 바꿀 수 있습니다.</div><div class="kanban">${cols.map(([key,label])=>{const arr=state.snapshot.tasks.filter(t=>t.status===key);return `<div class="kanban-col"><div class="kanban-head"><span>${label}</span><span>${arr.length}</span></div>${arr.map(t=>`<div class="task-card" data-task-id="${t.id}"><div class="task-title">${esc(t.title)}</div><div style="margin-bottom:8px">${t.requirement_ref?`<span class="chip">${esc(t.requirement_ref)}</span>`:''} <span class="chip ${t.priority==='high'?'danger':''}">${esc(t.priority)}</span></div><div class="task-meta"><span>${esc(t.owner)}</span><span>#${t.id}</span></div></div>`).join('')||'<div class="empty">작업 없음</div>'}</div>`}).join('')}</div>`;
 }
-function layoutNodes(nodes){
-  return nodes.map((n,i)=>({ ...n, px: 60+(i%5)*185, py: 70+Math.floor(i/5)*150 }));
+function diagramMeta(view){
+  return {
+    process:{
+      eyebrow:'PROCESS FLOW', title:'System Process',
+      description:'업무/시스템이 어떤 순서와 분기로 진행되는지 왼쪽에서 오른쪽으로 읽습니다.',
+      guide:'이벤트 → 처리 → 판단 → 저장/표시 순서가 한눈에 보이도록 Step 기준으로 자동 정렬합니다.',
+      legend:[['event','시작/이벤트'],['process','처리 단계'],['decision','판단/분기'],['ui','사용자 확인']]
+    },
+    architecture:{
+      eyebrow:'SYSTEM STRUCTURE', title:'Architecture',
+      description:'장치·서비스·데이터 저장소·UI의 책임과 의존관계를 계층으로 읽습니다.',
+      guide:'Edge/Input → Application/Service → Data/Storage 또는 Output/UI 흐름으로 자동 정렬합니다.',
+      legend:[['device','장치/외부'],['service','서비스'],['database','데이터 저장소'],['ui','UI/출력']]
+    },
+    dataflow:{
+      eyebrow:'DATA MOVEMENT', title:'Data Flow',
+      description:'데이터가 어디서 생성되고 어떤 처리를 거쳐 어디에 저장·소비되는지 보여줍니다.',
+      guide:'Source → Processing → Store/Consumer 방향으로 배치하고 연결선 라벨을 데이터 이름으로 강조합니다.',
+      legend:[['source','데이터 원천'],['process','변환/검증'],['database','저장'],['sink','소비처']]
+    }
+  }[view];
 }
 function renderDiagram(view){
-  const nodes=layoutNodes(state.snapshot.nodes.filter(n=>n.view===view));
+  const nodes=state.snapshot.nodes.filter(n=>n.view===view);
   const edges=state.snapshot.edges.filter(e=>e.view===view);
-  const pos=Object.fromEntries(nodes.map(n=>[n.id,n]));
-  const lines=edges.map(e=>{ const a=pos[e.source_id],b=pos[e.target_id]; if(!a||!b)return''; const x1=a.px+150,y1=a.py+35,x2=b.px,y2=b.py+35; const mx=(x1+x2)/2,my=(y1+y2)/2; return `<g><path d="M${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" fill="none" stroke="#aab4c3" stroke-width="2" marker-end="url(#arrow)"/>${e.label?`<text x="${mx}" y="${my-7}" text-anchor="middle" class="edge-label">${esc(e.label)}</text>`:''}</g>`}).join('');
-  const labels={process:'시스템이 어떤 순서로 동작하는지',architecture:'어떤 시스템과 컴포넌트로 구성되는지',dataflow:'데이터가 어디서 생겨 어디로 이동하는지'};
-  return `<div class="panel"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><div><h3>${titles[view]}</h3><p class="muted">${labels[view]}</p></div><div class="diagram-toolbar"><button class="mini-btn" data-action="add-node" data-view="${view}">+ 노드</button><button class="mini-btn" data-action="add-edge" data-view="${view}">+ 연결</button></div></div><div class="diagram-wrap"><div class="diagram"><svg viewBox="0 0 1000 520" preserveAspectRatio="none"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#aab4c3"/></marker></defs>${lines}</svg>${nodes.map(n=>`<div class="diagram-node" data-kind="${esc(n.kind)}" style="left:${n.px}px;top:${n.py}px"><strong>${esc(n.label)}</strong><small>${esc(n.kind)}${n.detail?' · '+esc(n.detail):''}</small></div>`).join('')}</div></div></div>`;
+  const meta=diagramMeta(view);
+  const stats=`<div class="diagram-stats"><span><b>${nodes.length}</b> Nodes</span><span><b>${edges.length}</b> Connections</span><span class="diagram-auto-badge">AUTO LAYOUT</span></div>`;
+  const legend=meta.legend.map(([kind,label])=>`<span class="diagram-legend-item"><i class="legend-dot kind-${kind}"></i>${esc(label)}</span>`).join('');
+  const body=nodes.length
+    ? `<div class="professional-diagram-canvas">${DiagramLayout.renderSvg(view,nodes,edges)}</div>`
+    : `<div class="diagram-empty"><strong>아직 ${esc(meta.title)} 노드가 없습니다.</strong><span>AI Design Session에서 구조가 결정되면 여기에 자동 시각화됩니다.</span></div>`;
+  return `<section class="diagram-workspace diagram-workspace-${view}">
+    <div class="panel diagram-header-card">
+      <div class="diagram-header-main"><div><div class="eyebrow">${meta.eyebrow}</div><h2>${esc(meta.title)}</h2><p>${esc(meta.description)}</p></div>${stats}</div>
+      <div class="diagram-reading-guide"><strong>읽는 방법</strong><span>${esc(meta.guide)}</span></div>
+      <div class="diagram-legend">${legend}</div>
+      <div class="diagram-toolbar"><button class="mini-btn" data-action="add-node" data-view="${view}">+ 노드</button><button class="mini-btn" data-action="add-edge" data-view="${view}">+ 연결</button></div>
+    </div>
+    <div class="panel diagram-surface">${body}</div>
+  </section>`;
 }
 function renderIdeas(){
   const s=state.snapshot;

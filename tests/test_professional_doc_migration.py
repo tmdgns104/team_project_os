@@ -5,8 +5,8 @@ from app.main import DOCUMENT_TEMPLATES, app, ensure_project_documents
 
 
 class ProfessionalDocumentMigrationTests(unittest.TestCase):
-    def test_version_is_v011(self):
-        self.assertEqual(app.version, "0.11.0")
+    def test_version_is_v012(self):
+        self.assertEqual(app.version, "0.12.0")
 
     def test_only_untouched_system_templates_are_refreshed(self):
         conn = sqlite3.connect(":memory:")

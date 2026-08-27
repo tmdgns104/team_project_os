@@ -1,8 +1,21 @@
-# Team Project OS V0.11
+# Team Project OS V0.12
 
 사람이 처음부터 완벽한 기획서를 작성하지 않아도, **자기 생성형 AI와 충분히 대화해 프로젝트를 구체화한 뒤 `/apply`로 Project OS에 정식 프로젝트를 만드는 팀 협업 프로그램**입니다.
 
 AI는 프로젝트의 필수 의존성이 아니라 선택 가능한 Worker Provider입니다. AI를 사용하지 않는 팀원도 같은 웹 UI와 프로젝트 상태를 사용할 수 있고, AI를 사용하는 팀원은 자기 PC의 **Codex / Claude Code / OpenCode / Antigravity CLI**를 연결합니다.
+
+## V0.12 Human-readable Design Diagrams
+
+System Process / Architecture / Data Flow는 더 이상 동일한 단순 격자 배치를 사용하지 않습니다. 그래프 연결을 분석해 계층을 만들고, 노드가 겹치지 않도록 정렬하며, 연결선은 노드 경계에서 출발/도착합니다.
+
+- System Process: STEP 순서와 분기를 왼쪽→오른쪽으로 표현
+- Architecture: Edge/Input → Application/Service → Data/Storage 또는 Output/UI 계층
+- Data Flow: Source → Processing → Store/Consumer 단계와 데이터 라벨 강조
+- 같은 레벨/역방향 연결은 노드를 가로지르지 않도록 아래쪽 별도 경로 사용
+- AI가 만든 긴 라벨도 두 줄 제한/말줄임으로 다이어그램 크기를 안정적으로 유지
+- 연결선 라벨을 흰색 캡슐로 표시해 배경/선과 겹쳐도 읽을 수 있도록 개선
+
+`tests/test_diagram_layout.js`에서 노드 중첩, 경계 포트 연결, 유효 SVG, XSS escape를 검증하고 `tools/simulate_project_creation_v012.py`에서 프로젝트 생성부터 13종 문서와 3개 디자인 그래프까지 E2E로 검증합니다.
 
 ## V0.11 Professional Deliverables
 
@@ -56,7 +69,7 @@ Project OS 정식 프로젝트 생성
 웹 UI에서 문서 · 요구사항 · Decision · Canvas · Task를 팀이 공유
 ```
 
-`/apply` 전에는 서버의 프로젝트/문서/Canvas를 변경하지 않습니다.
+Live Design이 켜진 경우 `/apply` 전에는 `lifecycle=draft`인 별도 Draft Workspace만 갱신되며, `/apply`에서 같은 Draft가 정식 active 프로젝트로 승격됩니다.
 
 ---
 
