@@ -139,7 +139,7 @@ class V014ServerCompatibilityTests(unittest.TestCase):
                 self.assertEqual({n["view"] for n in snap["nodes"]}, {"process", "architecture", "dataflow"})
                 reqdoc = next(d for d in snap["documents"] if d["doc_type"] == "requirements")
                 self.assertIn("E2E Test", reqdoc["content"])
-                self.assertEqual(client.get("/api/health").json()["version"], "0.14.1")
+                self.assertEqual(client.get("/api/health").json()["version"], "0.14.0")
 
 
 if __name__ == "__main__":
