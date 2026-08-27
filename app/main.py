@@ -17,10 +17,28 @@ from pydantic import BaseModel, Field
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.getenv("PROJECT_OS_DB", BASE_DIR / "project_os.db"))
 ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
+SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.1.0")
+app = FastAPI(title="Team Project OS", version="0.2.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+DOCUMENT_TEMPLATES = [
+    ("proposal", "기획서", "# 기획서\n\n## 1. 배경 및 문제 정의\n\n## 2. 프로젝트 목표\n\n## 3. 대상 사용자\n\n## 4. 핵심 가치\n\n## 5. 성공 기준\n\n## 6. 범위 / 제외 범위\n"),
+    ("plan", "계획서", "# 계획서\n\n## 1. 추진 범위\n\n## 2. 일정\n\n## 3. 역할과 책임\n\n## 4. 개발/운영 전략\n\n## 5. 리스크와 대응\n"),
+    ("milestone", "마일스톤", "# 마일스톤\n\n| Milestone | 목표 | 완료 조건 | 목표일 | 상태 |\n|---|---|---|---|---|\n| M1 |  |  |  | Draft |\n"),
+    ("backlog", "백로그", "# 백로그\n\n| ID | 항목 | 우선순위 | 담당 | 상태 | 연결 요구사항 |\n|---|---|---|---|---|---|\n"),
+    ("requirements", "요구사항 정의서", "# 요구사항 정의서\n\n| ID | 요구사항 | 상세 | 우선순위 | 상태 | 검증 기준 |\n|---|---|---|---|---|---|\n"),
+    ("service_policy", "서비스 및 운영 정책서", "# 서비스 및 운영 정책서\n\n## 1. 사용자/권한 정책\n\n## 2. 데이터 보관 정책\n\n## 3. 장애/예외 처리 정책\n\n## 4. 로그/감사 정책\n\n## 5. 운영 및 배포 정책\n"),
+    ("function_definition", "기능 정의서", "# 기능 정의서\n\n| 기능 ID | 기능명 | 입력 | 처리 | 출력 | 예외 | 관련 요구사항 |\n|---|---|---|---|---|---|---|\n"),
+    ("ia", "IA (Information Architecture, 정보구조도)", "# IA\n\n## 정보 구조\n\n- Home\n  - \n\n## 화면/메뉴 관계\n"),
+    ("screen_design", "화면 설계서", "# 화면 설계서\n\n## SCREEN-001\n\n### 목적\n\n### 주요 컴포넌트\n\n### 사용자 동작\n\n### 연결 기능/API\n"),
+    ("system_architecture", "시스템 구조도", "# 시스템 구조도\n\n## 구성 요소\n\n## 연결 관계\n\n## 배포 구조\n\n> Design > Architecture Canvas와 함께 관리합니다.\n"),
+    ("data_flow", "데이터 플로우", "# 데이터 플로우\n\n| Source | Data | Processing | Destination | Protocol/Format |\n|---|---|---|---|---|\n\n> Design > Data Flow Canvas와 함께 관리합니다.\n"),
+    ("api_design", "API 설계 문서", "# API 설계 문서\n\n| API ID | Method | Path | 목적 | Request | Response | Error |\n|---|---|---|---|---|---|---|\n"),
+    ("qa", "QA 문서", "# QA 문서\n\n## QA Strategy\n\n## Test Cases\n\n| TC ID | 연결 요구사항 | 사전조건 | 절차 | Expected | Result | Evidence |\n|---|---|---|---|---|---|---|\n"),
+]
+
 
 
 @contextmanager
@@ -144,6 +162,17 @@ class RequirementPatch(BaseModel):
     title: str | None = None
     detail: str | None = None
     status: str | None = None
+
+
+class DocumentPatch(BaseModel):
+    content: str = Field(default="", max_length=200000)
+    status: str = "draft"
+    updated_by: str = Field(default="Team member", max_length=120)
+
+
+class DocumentCommentCreate(BaseModel):
+    author: str = Field(default="Team member", max_length=120)
+    body: str = Field(min_length=1, max_length=4000)
 
 
 class ConnectionManager:
@@ -280,11 +309,48 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                doc_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft',
+                updated_by TEXT NOT NULL DEFAULT 'System',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(project_id, doc_type)
+            );
+            CREATE TABLE IF NOT EXISTS document_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL,
+                editor TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS document_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                author TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         count = conn.execute("SELECT COUNT(*) AS c FROM projects").fetchone()["c"]
-        if count == 0:
+        if count == 0 and SEED_DEMO:
             seed_demo(conn)
+        for project_row in conn.execute("SELECT id FROM projects"):
+            ensure_project_documents(conn, project_row["id"])
+
+
+def ensure_project_documents(conn: sqlite3.Connection, project_id: int) -> None:
+    for doc_type, title, content in DOCUMENT_TEMPLATES:
+        conn.execute(
+            "INSERT OR IGNORE INTO documents(project_id,doc_type,title,content,status,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (project_id, doc_type, title, content, "draft", "System", now(), now()),
+        )
 
 
 def add_activity(conn: sqlite3.Connection, project_id: int, type_: str, message: str, actor: str = "System") -> None:
@@ -305,6 +371,7 @@ def seed_demo(conn: sqlite3.Connection) -> None:
         ),
     )
     p = cur.lastrowid
+    ensure_project_documents(conn, p)
     for title, detail in [
         ("REQ-001 실시간 검사", "제품 유입 후 500ms 안에 판정 결과 생성"),
         ("REQ-002 불량 이력 저장", "검사 결과와 이미지 참조를 저장"),
@@ -392,7 +459,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "0.2.0"}
 
 
 @app.get("/api/projects", dependencies=[])
@@ -411,6 +478,7 @@ async def create_project(payload: ProjectCreate, x_access_key: str | None = Head
             (payload.name, payload.goal, payload.description, now()),
         )
         pid = cur.lastrowid
+        ensure_project_documents(conn, pid)
         add_activity(conn, pid, "project", "프로젝트가 생성되었습니다.")
         project = rowdict(conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
     return project
@@ -446,6 +514,8 @@ def snapshot(project_id: int, x_access_key: str | None = Header(default=None)):
             "ideas": [dict(r) for r in conn.execute("SELECT * FROM ideas WHERE project_id=? ORDER BY id DESC", (project_id,))],
             "decisions": [dict(r) for r in conn.execute("SELECT * FROM decisions WHERE project_id=? ORDER BY id DESC", (project_id,))],
             "members": [dict(r) for r in conn.execute("SELECT * FROM members WHERE project_id=? ORDER BY id", (project_id,))],
+            "documents": [dict(r) for r in conn.execute("SELECT * FROM documents WHERE project_id=? ORDER BY id", (project_id,))],
+            "document_comments": [dict(r) for r in conn.execute("SELECT c.* FROM document_comments c JOIN documents d ON d.id=c.document_id WHERE d.project_id=? ORDER BY c.id DESC LIMIT 100", (project_id,))],
             "activity": [dict(r) for r in conn.execute("SELECT * FROM activity WHERE project_id=? ORDER BY id DESC LIMIT 30", (project_id,))],
             "bridges": [dict(r) for r in conn.execute("SELECT id,project_id,member_name,provider,machine_name,last_seen,created_at FROM bridges WHERE project_id=? ORDER BY id DESC", (project_id,))],
             "ai_jobs": [dict(r) for r in conn.execute("SELECT * FROM ai_jobs WHERE project_id=? ORDER BY id DESC LIMIT 30", (project_id,))],
@@ -456,6 +526,8 @@ def snapshot(project_id: int, x_access_key: str | None = Header(default=None)):
                 "tasks_blocked": sum(1 for t in tasks if t["status"] == "blocked"),
                 "requirements": conn.execute("SELECT COUNT(*) c FROM requirements WHERE project_id=?", (project_id,)).fetchone()["c"],
                 "decisions_pending": conn.execute("SELECT COUNT(*) c FROM decisions WHERE project_id=? AND status!='accepted'", (project_id,)).fetchone()["c"],
+                "documents_total": conn.execute("SELECT COUNT(*) c FROM documents WHERE project_id=?", (project_id,)).fetchone()["c"],
+                "documents_ready": conn.execute("SELECT COUNT(*) c FROM documents WHERE project_id=? AND status IN ('review','approved','complete')", (project_id,)).fetchone()["c"],
             },
         }
 
@@ -523,6 +595,56 @@ async def patch_task(task_id: int, payload: TaskPatch, x_access_key: str | None 
         add_activity(conn, pid, "task", f"Task 변경: {row['title']} → {data.get('status', row['status'])}", data.get("owner", row["owner"]))
     await manager.broadcast(pid, {"type": "refresh", "scope": "tasks"})
     return {"ok": True}
+
+
+@app.patch("/api/documents/{document_id}")
+async def patch_document(document_id: int, payload: DocumentPatch, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        row = conn.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Document not found")
+        conn.execute(
+            "INSERT INTO document_revisions(document_id,content,status,editor,created_at) VALUES(?,?,?,?,?)",
+            (document_id, row["content"], row["status"], payload.updated_by, now()),
+        )
+        conn.execute(
+            "UPDATE documents SET content=?,status=?,updated_by=?,updated_at=? WHERE id=?",
+            (payload.content, payload.status, payload.updated_by, now(), document_id),
+        )
+        pid = row["project_id"]
+        add_activity(conn, pid, "document", f"문서 수정: {row['title']}", payload.updated_by)
+        item = rowdict(conn.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone())
+    await manager.broadcast(pid, {"type": "refresh", "scope": "documents", "document_id": document_id})
+    return item
+
+
+@app.get("/api/documents/{document_id}/revisions")
+def document_revisions(document_id: int, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT id,document_id,status,editor,created_at FROM document_revisions WHERE document_id=? ORDER BY id DESC LIMIT 50",
+            (document_id,),
+        )]
+
+
+@app.post("/api/documents/{document_id}/comments")
+async def add_document_comment(document_id: int, payload: DocumentCommentCreate, x_access_key: str | None = Header(default=None)):
+    require_access(x_access_key)
+    with db() as conn:
+        doc = conn.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+        cur = conn.execute(
+            "INSERT INTO document_comments(document_id,author,body,created_at) VALUES(?,?,?,?)",
+            (document_id, payload.author, payload.body, now()),
+        )
+        add_activity(conn, doc["project_id"], "document", f"문서 댓글: {doc['title']}", payload.author)
+        item = rowdict(conn.execute("SELECT * FROM document_comments WHERE id=?", (cur.lastrowid,)).fetchone())
+        pid = doc["project_id"]
+    await manager.broadcast(pid, {"type": "refresh", "scope": "documents", "document_id": document_id})
+    return item
 
 
 @app.post("/api/projects/{project_id}/nodes")
@@ -645,11 +767,13 @@ def bridge_jobs(token: str = Query(...)):
         task = conn.execute("SELECT * FROM tasks WHERE id=?", (job["task_id"],)).fetchone()
         project = conn.execute("SELECT * FROM projects WHERE id=?", (job["project_id"],)).fetchone()
         reqs = [dict(r) for r in conn.execute("SELECT * FROM requirements WHERE project_id=?", (job["project_id"],))]
+        docs = [dict(r) for r in conn.execute("SELECT * FROM documents WHERE project_id=? AND doc_type IN ('requirements','function_definition','system_architecture','api_design','qa') ORDER BY id", (job["project_id"],))]
         return {
             "job": dict(job),
             "task": dict(task),
             "project": dict(project),
             "requirements": reqs,
+            "documents": docs,
         }
 
 

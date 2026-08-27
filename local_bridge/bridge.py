@@ -46,6 +46,10 @@ def build_prompt(bundle: dict) -> str:
     reqs = bundle.get("requirements", [])
     relevant = [r for r in reqs if not task.get("requirement_ref") or r["title"].split()[0] in task.get("requirement_ref", "")]
     req_text = "\n".join(f"- {r['title']}: {r['detail']}" for r in (relevant or reqs[:6]))
+    docs = bundle.get("documents", [])
+    doc_text = "\n\n".join(
+        f"[{d['title']}] status={d['status']}\n{d['content'][:1600]}" for d in docs
+    )
     return f"""You are contributing to a shared team project through Team Project OS.
 
 PROJECT
@@ -63,6 +67,9 @@ Requirement reference: {task['requirement_ref']}
 
 RELATED REQUIREMENTS
 {req_text or '- none registered'}
+
+RELATED PROJECT DOCUMENT EXCERPTS
+{doc_text or '- none registered'}
 
 ADDITIONAL INSTRUCTION
 {job.get('instruction') or 'Work only within the current task scope.'}
@@ -97,6 +104,8 @@ def provider_command(provider: str, prompt: str, custom: str | None = None) -> l
         return ["claude", "-p", prompt, "--output-format", "text"]
     if provider == "opencode":
         return ["opencode", "run", prompt]
+    if provider == "antigravity":
+        return ["agy", "-p", prompt, "--output-format", "text", "--print-timeout", "45m"]
     if provider == "dry-run":
         return [sys.executable, "-c", "print('DRY RUN: no AI command executed')"]
     raise RuntimeError(f"Unsupported provider: {provider}. Use --command for a custom CLI.")
@@ -182,7 +191,7 @@ def run(args):
 def doctor(_args):
     cfg = load_config()
     print(f"Config: {CONFIG_PATH} {'OK' if cfg else 'NOT REGISTERED'}")
-    for name, cmd in [("Codex", ["codex", "--version"]), ("Claude Code", ["claude", "--version"]), ("OpenCode", ["opencode", "--version"])]:
+    for name, cmd in [("Codex", ["codex", "--version"]), ("Claude Code", ["claude", "--version"]), ("OpenCode", ["opencode", "--version"]), ("Antigravity CLI", ["agy", "--version"])]:
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
             text = (p.stdout or p.stderr).strip().splitlines()
@@ -198,7 +207,7 @@ def main():
     r.add_argument("--server", required=True)
     r.add_argument("--project", required=True, type=int)
     r.add_argument("--member", required=True)
-    r.add_argument("--provider", required=True, choices=["codex", "claude", "opencode", "dry-run"])
+    r.add_argument("--provider", required=True, choices=["codex", "claude", "opencode", "antigravity", "dry-run"])
     r.add_argument("--repo", default="")
     r.add_argument("--access-key", default="")
     r.add_argument("--command", default="", help="Optional custom CLI template; {prompt} may be used")

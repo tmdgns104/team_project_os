@@ -1,12 +1,13 @@
-# Team Project OS V1
+# Team Project OS V0.2
 
 사람과 각자의 생성형 AI가 **같은 프로젝트 상태를 공유하면서 일하기 위한 팀 협업 프로그램**입니다.
 
-AI가 없는 팀원도 그대로 사용할 수 있고, AI를 사용하는 팀원은 자기 PC의 **Codex / Claude Code / OpenCode**를 Local Bridge로 연결할 수 있습니다.
+AI가 없는 팀원도 그대로 사용할 수 있고, AI를 사용하는 팀원은 자기 PC의 **Codex / Claude Code / OpenCode / Antigravity CLI**를 Local Bridge로 연결할 수 있습니다.
 
 ## V1에서 바로 되는 것
 
-- 프로젝트 목표와 요구사항 공유
+- 새 프로젝트 생성 및 프로젝트 목표/요구사항 공유
+- 13종 공동 프로젝트 문서 Workspace (revision + discussion)
 - 개발 진척도 Kanban 보드
 - 전체 System Process 시각화
 - Architecture 구성도 시각화
@@ -14,7 +15,7 @@ AI가 없는 팀원도 그대로 사용할 수 있고, AI를 사용하는 팀원
 - 아이디어 / Decision(ADR) 공유
 - 팀원별 AI 사용 여부 표시
 - 실시간 WebSocket 갱신
-- Codex / Claude Code / OpenCode Local Bridge 등록
+- Codex / Claude Code / OpenCode / Antigravity CLI Local Bridge 등록
 - 공유 Task를 개인 AI 대기열로 전달
 - 개인 AI 실행 결과와 Evidence를 공유 서버로 회수
 - Docker 기반 팀 서버 배포
@@ -123,7 +124,7 @@ Shared Task
    ↓
 Local Bridge
    ↓
-Codex / Claude Code / OpenCode
+Codex / Claude Code / OpenCode / Antigravity CLI
    ↓
 코드 작업 / 검증
    ↓
@@ -322,3 +323,38 @@ V1의 `APP_ACCESS_KEY`는 데모/소규모 팀용 공유키입니다.
 9. 프로젝트별 Knowledge/RAG
 10. Slack/Teams/Notion 연동
 
+
+
+---
+
+# V0.2: 프로젝트를 처음부터 시작하기
+
+웹 상단의 **+ 새 프로젝트**를 누르면 프로젝트 이름, 목표, 배경/성공 기준을 입력해 빈 프로젝트를 만들 수 있습니다. 새 프로젝트에는 아래 13종 문서가 자동 생성됩니다.
+
+- 기획서
+- 계획서
+- 마일스톤
+- 백로그
+- 요구사항 정의서
+- 서비스 및 운영 정책서
+- 기능 정의서
+- IA (Information Architecture, 정보구조도)
+- 화면 설계서
+- 시스템 구조도
+- 데이터 플로우
+- API 설계 문서
+- QA 문서
+
+`Documents` 화면에서 팀이 같은 문서를 작성합니다. 저장 전 내용은 revision으로 남고, 문서별 Discussion 댓글도 공유됩니다. 자세한 흐름은 `docs/PROJECT_WORKFLOW.md`를 참고하세요.
+
+## Antigravity CLI
+
+Local Bridge에서 `antigravity` provider를 선택할 수 있습니다. Antigravity CLI는 공식 headless print mode를 사용합니다.
+
+```bash
+python local_bridge/bridge.py doctor
+python local_bridge/bridge.py register --server http://SERVER_IP:8000 --project 1 --member "내 이름" --provider antigravity --repo D:\my-project
+python local_bridge/bridge.py run --repo D:\my-project --once
+```
+
+Bridge 기본 실행은 `agy -p ... --output-format text --print-timeout 45m`이며, 전체 도구 권한을 자동 승인하는 옵션은 기본 적용하지 않습니다. 자세한 내용은 `docs/ANTIGRAVITY_CLI.md`를 참고하세요.

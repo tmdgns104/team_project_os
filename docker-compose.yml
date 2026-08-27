@@ -6,6 +6,7 @@ services:
     environment:
       APP_ACCESS_KEY: ${APP_ACCESS_KEY:-}
       PROJECT_OS_DB: /data/project_os.db
+      PROJECT_OS_SEED_DEMO: ${PROJECT_OS_SEED_DEMO:-1}
     volumes:
       - project_os_data:/data
     restart: unless-stopped
