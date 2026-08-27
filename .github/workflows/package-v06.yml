@@ -1,0 +1,26 @@
+name: Package Team Project OS v0.6
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/package-v06.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare package
+        run: |
+          rm -rf .git .github
+          zip -r team_project_os_v0.6.zip . -x 'team_project_os_v0.6.zip'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: team_project_os_v0.6
+          path: team_project_os_v0.6.zip
+          if-no-files-found: error
+          retention-days: 1
