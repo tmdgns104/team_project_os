@@ -1,0 +1,33 @@
+name: Fix Windows CLI launch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-windows-cli-launch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply Windows CLI launcher fix
+        run: python scripts/fix_windows_cli_launch.py
+      - name: Verify bridge and full regression
+        run: |
+          python -m py_compile local_bridge/bridge.py tests/test_bridge.py
+          python local_bridge/bridge.py -h | grep -q 'assistant-register'
+          python local_bridge/bridge.py -h | grep -q 'assistant-run'
+          pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          node --check app/static/app.js
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add local_bridge/bridge.py tests/test_bridge.py
+          git commit -m 'fix Windows local AI CLI launch and diagnostics [skip ci]'
+          git push
