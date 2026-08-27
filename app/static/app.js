@@ -3,7 +3,7 @@ const state = {
   accessKey: localStorage.getItem('project_os_access_key') || ''
 };
 const titles = {
-  overview:'Overview', definition:'Goal & Requirements', documents:'Project Documents', progress:'Development Progress',
+  overview:'Overview', definition:'Goal & Requirements', documents:'Project Documents', traceability:'Traceability', progress:'Development Progress',
   process:'System Process', architecture:'Architecture', dataflow:'Data Flow',
   ideas:'Ideas & Decisions', team:'Team & AI'
 };
@@ -63,7 +63,7 @@ function setAccessKey(){
 }
 function render(){
   if(!state.snapshot){ $('#content').innerHTML='<div class="panel onboarding"><h2>새 프로젝트를 시작하세요</h2><p class="muted">기획부터 설계, 개발, QA까지 팀이 같은 Workspace에서 진행할 수 있습니다.</p><button class="primary-btn" data-action="new-project">+ 프로젝트 생성</button></div>'; bindViewActions(); return; }
-  const fn={overview:renderOverview,definition:renderDefinition,documents:renderDocuments,progress:renderProgress,process:()=>renderDiagram('process'),architecture:()=>renderDiagram('architecture'),dataflow:()=>renderDiagram('dataflow'),ideas:renderIdeas,team:renderTeam}[state.view];
+  const fn={overview:renderOverview,definition:renderDefinition,documents:renderDocuments,traceability:renderTraceability,progress:renderProgress,process:()=>renderDiagram('process'),architecture:()=>renderDiagram('architecture'),dataflow:()=>renderDiagram('dataflow'),ideas:renderIdeas,team:renderTeam}[state.view];
   $('#content').innerHTML=fn(); bindViewActions();
 }
 function renderOverview(){
@@ -96,17 +96,22 @@ function renderDocuments(){
   const d=s.documents.find(x=>x.id===state.selectedDocumentId);
   const comments=s.document_comments.filter(c=>c.document_id===d.id);
   const completed=s.documents.filter(x=>['review','approved','complete'].includes(x.status)).length;
-  return `<div class="documents-head"><div><div class="eyebrow">PROJECT DOCUMENT WORKSPACE</div><h2>프로젝트 문서 ${completed}/${s.documents.length}</h2><p class="muted">문서는 서버에 공유 저장되며 저장 전 내용은 revision으로 남습니다.</p></div></div>
+  return `<div class="documents-head"><div><div class="eyebrow">PROJECT DOCUMENT WORKSPACE</div><h2>프로젝트 문서 ${completed}/${s.documents.length}</h2><p class="muted">문서는 서버에 공유 저장되며 저장 전 내용은 revision으로 남습니다.</p></div><div><button class="mini-btn" data-action="export-project">첨부 패키지 ZIP</button></div></div>
   <div class="document-layout">
     <div class="panel document-list">${s.documents.map(x=>`<button class="document-item ${x.id===d.id?'active':''}" data-document-id="${x.id}"><span><strong>${esc(x.title)}</strong><small>${esc(x.updated_by)} · ${new Date(x.updated_at).toLocaleString('ko-KR')}</small></span>${statusChip(x.status)}</button>`).join('')}</div>
     <div class="panel document-editor">
       <div class="document-editor-head"><div><h3>${esc(d.title)}</h3><small class="muted">${esc(d.doc_type)} · 마지막 수정 ${new Date(d.updated_at).toLocaleString('ko-KR')}</small></div>${statusChip(d.status)}</div>
       <div class="document-controls">${selectField('document_status','상태',[['draft','초안'],['review','검토중'],['approved','승인됨'],['complete','완료']],d.status)}${field('document_editor','작성자',d.updated_by||'Team member')}</div>
       <div class="field"><label>공동 문서 내용 (Markdown)</label><textarea id="documentContent" class="document-content">${esc(d.content)}</textarea></div>
-      <div class="form-actions"><button type="button" class="primary-btn" data-action="save-document">문서 저장</button></div>
+      <div class="form-actions"><button type="button" class="ghost-btn" data-action="export-document">Markdown 다운로드</button><button type="button" class="primary-btn" data-action="save-document">문서 저장</button></div>
       <div class="document-comments"><h3>Discussion</h3><form id="documentCommentForm" class="comment-form"><input name="author" value="Team member" aria-label="작성자"><input name="body" placeholder="이 문서에 의견 남기기" aria-label="댓글"><button class="mini-btn" type="submit">댓글</button></form>${comments.length?comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><span>${esc(c.body)}</span><small>${new Date(c.created_at).toLocaleString('ko-KR')}</small></div>`).join(''):'<div class="empty compact">아직 의견이 없습니다.</div>'}</div>
     </div>
   </div>`;
+}
+function renderTraceability(){
+  const s=state.snapshot; const explicit=s.trace_links||[]; const derived=s.derived_trace_links||[]; const all=[...explicit,...derived];
+  return `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div><div class="eyebrow">END-TO-END TRACEABILITY</div><h2>요구사항부터 QA까지 연결</h2><p class="muted">기획/요구사항 → 기능 → IA/화면 → API/Architecture → Task → QA 관계를 연결합니다. Task의 REQ 참조는 자동 연결됩니다.</p></div><button class="mini-btn" data-action="add-trace-link">+ 연결 추가</button></div></div>
+  <div class="panel" style="margin-top:18px">${all.length?`<table class="table"><thead><tr><th>Source</th><th>Relation</th><th>Target</th><th>Note</th><th></th></tr></thead><tbody>${all.map(l=>`<tr><td><strong>${esc(l.source_type)}:${esc(l.source_ref)}</strong></td><td>${esc(l.relation)}</td><td><strong>${esc(l.target_type)}:${esc(l.target_ref)}</strong></td><td>${esc(l.note||'')}</td><td>${l.derived?'<span class="chip ai">자동</span>':`<button class="mini-btn" data-action="delete-trace" data-view="${l.id}">삭제</button>`}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">아직 연결이 없습니다. 요구사항과 구현/QA 항목을 연결해보세요.</div>'}</div>`;
 }
 function renderProgress(){
   const cols=[['todo','예정'],['in_progress','진행중'],['review','검토'],['done','완료']];
@@ -149,18 +154,30 @@ function openModal(title, html, onSubmit){
 function field(name,label,value='',type='text'){ return `<div class="field"><label>${esc(label)}</label><input name="${name}" type="${type}" value="${esc(value)}" required></div>`; }
 function textarea(name,label,value=''){ return `<div class="field"><label>${esc(label)}</label><textarea name="${name}">${esc(value)}</textarea></div>`; }
 function selectField(name,label,options,current=''){ return `<div class="field"><label>${esc(label)}</label><select name="${name}">${options.map(([v,t])=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(t)}</option>`).join('')}</select></div>`; }
-function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',documents:'document-help',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
+function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',documents:'document-help',traceability:'add-trace-link',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
 function handleAction(action, view){
   if(action==='new-project') return newProject(); if(action==='add-task') return addTask(); if(action==='add-requirement') return addRequirement(); if(action==='edit-goal') return editGoal();
-  if(action==='save-document') return saveDocument(); if(action==='document-help') return documentHelp();
+  if(action==='save-document') return saveDocument(); if(action==='document-help') return documentHelp(); if(action==='export-project') return exportProject(); if(action==='export-document') return exportDocument(); if(action==='add-trace-link') return addTraceLink(); if(action==='delete-trace') return deleteTrace(view);
   if(action==='add-node') return addNode(view); if(action==='add-edge') return addEdge(view); if(action==='add-idea') return addIdea(); if(action==='add-decision') return addDecision(); if(action==='add-member') return addMember(); if(action==='add-ai-job') return addAIJob(); if(action==='bridge-help') return bridgeHelp();
 }
 function newProject(){
-  openModal('새 프로젝트 시작',field('name','프로젝트 이름')+textarea('goal','프로젝트 목표')+textarea('description','배경 / 문제 / 성공 기준'),async fd=>{
+  openModal('새 프로젝트 시작',field('name','프로젝트 이름')+textarea('goal','프로젝트 목표')+textarea('problem','해결하려는 문제')+textarea('users','대상 사용자 / 이해관계자')+textarea('success_criteria','성공 기준 / KPI')+textarea('scope','포함 범위 / 제외 범위')+textarea('constraints','기술·일정·예산·운영 제약')+textarea('description','추가 설명'),async fd=>{
     const p=await api('/api/projects',{method:'POST',body:JSON.stringify(Object.fromEntries(fd))});
     state.projectId=p.id; state.selectedDocumentId=null; await loadProjects(); connectWs(); state.view='documents'; document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view==='documents')); $('#pageTitle').textContent=titles.documents;
   });
 }
+async function downloadFile(url, filename){
+  const headers={}; if(state.accessKey) headers['X-Access-Key']=state.accessKey;
+  const r=await fetch(url,{headers}); if(!r.ok) throw new Error('파일 생성 실패');
+  const blob=await r.blob(); const href=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=href; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(href),1000);
+}
+function exportProject(){ return downloadFile(`/api/projects/${state.projectId}/export/documents.zip`,`team_project_${state.projectId}_documents.zip`).then(()=>toast('프로젝트 첨부 패키지를 생성했습니다.')).catch(e=>toast(e.message)); }
+function exportDocument(){ const d=state.snapshot.documents.find(x=>x.id===state.selectedDocumentId); if(!d)return; return downloadFile(`/api/documents/${d.id}/export.md`,`${d.doc_type}.md`).catch(e=>toast(e.message)); }
+function addTraceLink(){
+  const types=[['requirement','Requirement'],['feature','Feature'],['ia','IA'],['screen','Screen'],['api','API'],['architecture','Architecture'],['data','Data Flow'],['task','Task'],['qa','QA/Test'],['decision','Decision'],['document','Document']];
+  openModal('Traceability 연결 추가',selectField('source_type','Source 종류',types,'requirement')+field('source_ref','Source ID','REQ-001')+selectField('target_type','Target 종류',types,'feature')+field('target_ref','Target ID','FUNC-001')+selectField('relation','관계',[['defines','defines'],['realized_by','realized_by'],['implemented_by','implemented_by'],['verified_by','verified_by'],['depends_on','depends_on'],['relates_to','relates_to']],'realized_by')+textarea('note','메모')+field('created_by','작성자','Team member'),fd=>api(`/api/projects/${state.projectId}/trace-links`,{method:'POST',body:JSON.stringify(Object.fromEntries(fd))}));
+}
+async function deleteTrace(id){ if(!confirm('이 연결을 삭제할까요?'))return; await api(`/api/trace-links/${id}`,{method:'DELETE'}); await loadSnapshot(); toast('연결을 삭제했습니다.'); }
 function documentHelp(){ toast('왼쪽 문서를 선택해 공동 작성하세요. 새 프로젝트에는 13종 템플릿이 자동 생성됩니다.'); }
 async function saveDocument(){
   const d=state.snapshot.documents.find(x=>x.id===state.selectedDocumentId); if(!d)return;

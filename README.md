@@ -358,3 +358,15 @@ python local_bridge/bridge.py run --repo D:\my-project --once
 ```
 
 Bridge 기본 실행은 `agy -p ... --output-format text --print-timeout 45m`이며, 전체 도구 권한을 자동 승인하는 옵션은 기본 적용하지 않습니다. 자세한 내용은 `docs/ANTIGRAVITY_CLI.md`를 참고하세요.
+
+
+## V0.3 - 프로젝트 처음부터 생성 / Traceability / 첨부 패키지
+
+- 새 프로젝트 생성 시 문제, 대상 사용자, 성공 기준, 범위, 제약조건을 입력할 수 있습니다.
+- 입력값은 기획서와 계획서 초기 초안에 자동 반영됩니다.
+- Traceability 화면에서 Requirement → Feature → IA/Screen → API/Architecture → Task → QA 관계를 연결할 수 있습니다.
+- Task의 `REQ-xxx` 참조는 자동 Trace로 표시됩니다.
+- Documents에서 선택 문서를 Markdown으로 다운로드할 수 있습니다.
+- `첨부 패키지 ZIP`은 13종 문서, Traceability Matrix, Process/Architecture/Data Flow Mermaid 문서, 구조화 snapshot JSON을 묶어 생성합니다.
+
+> 현재 Export는 Markdown/ZIP 중심입니다. PDF/DOCX 제출본 렌더링은 후속 버전에서 확장할 수 있습니다.
