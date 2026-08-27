@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.delivery_documents import build_delivery_documents
 from app.live_state import sanitize_live_state
-from local_bridge.project_cli_v014 import read_clipboard_text
+from local_bridge.project_cli_v014 import professional_distiller_prompt, professional_normalize, read_clipboard_text
 
 
 class V014ProfessionalDocumentTests(unittest.TestCase):
@@ -46,7 +47,6 @@ class V014ProfessionalDocumentTests(unittest.TestCase):
         for doc_type, markers in checks.items():
             for marker in markers:
                 self.assertIn(marker, docs[doc_type], f"{doc_type}: {marker}")
-        # 10 working days becomes a compact 2-week provisional schedule instead of a fixed 16-week template.
         self.assertIn("| 1 | 2 |", docs["milestone"])
 
     def test_malformed_model_state_is_safely_normalized(self):
@@ -69,6 +69,27 @@ class V014ProfessionalDocumentTests(unittest.TestCase):
         self.assertEqual(safe["requirements"][0]["priority"], "High")
         self.assertEqual(len(safe["design_updates"][0]["edges"]), 1)
         self.assertEqual(safe["pending"], ["실제 PLC 연결 미정"])
+
+    def test_final_distiller_preserves_acceptance_and_verification(self):
+        raw = json.dumps({
+            "reply": "기준선을 정리했습니다.",
+            "project_updates": {"name": "HMI MES", "goal": "실시간 생산 모니터링", "schedule": "10일 V1"},
+            "requirements": [{
+                "ref": "REQ-001", "type": "Functional", "title": "생산수량 정합성", "detail": "제품 완료 이벤트를 저장",
+                "source": "사용자 요청", "priority": "High", "acceptance_criteria": "1000개 처리 후 화면/DB 수량 일치",
+                "verification": "E2E Test", "owner": "Dev/QA", "traceability": "Process→Task→TC-001", "status": "defined",
+            }],
+            "decisions": [], "document_updates": [], "design_updates": [], "pending": [],
+        }, ensure_ascii=False)
+        result = professional_normalize(raw)
+        req = result["requirements"][0]
+        self.assertEqual(req["acceptance_criteria"], "1000개 처리 후 화면/DB 수량 일치")
+        self.assertEqual(req["verification"], "E2E Test")
+        self.assertEqual(req["priority"], "High")
+        prompt = professional_distiller_prompt([{"role": "user", "content": "10일 V1로 해줘"}], autofill_mode=True)
+        self.assertIn("acceptance_criteria", prompt)
+        self.assertIn("10일 V1", prompt)
+        self.assertIn("do not expand it into a generic 16-week plan", prompt)
 
     @patch("local_bridge.project_cli_v014.platform.system", return_value="Darwin")
     @patch("local_bridge.project_cli_v014.shutil.which", return_value="/usr/bin/pbpaste")
