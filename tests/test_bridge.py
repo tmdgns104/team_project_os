@@ -18,6 +18,10 @@ class BridgeProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Local CLI not found"):
             prepare_local_command(["definitely-not-a-real-project-os-cli-xyz", "--version"])
 
+    def test_codex_uses_stdin_sentinel(self):
+        cmd = provider_command("codex", "a prompt with many words")
+        self.assertEqual(cmd, ["codex", "exec", "-"])
+
     def test_antigravity_headless_command(self):
         cmd = provider_command("antigravity", "do the task")
         self.assertEqual(cmd[0], "agy")

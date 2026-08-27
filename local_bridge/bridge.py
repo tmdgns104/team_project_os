@@ -120,7 +120,9 @@ def provider_command(provider: str, prompt: str, custom: str | None = None) -> l
             out.append(prompt)
         return out
     if provider == "codex":
-        return ["codex", "exec", prompt]
+        # Use Codex's explicit stdin sentinel so long/multiline prompts are not
+        # re-tokenized by Windows cmd.exe or npm .cmd wrappers.
+        return ["codex", "exec", "-"]
     if provider == "claude":
         return ["claude", "-p", prompt, "--output-format", "text"]
     if provider == "opencode":
@@ -191,11 +193,13 @@ def assistant_run_once(cfg: dict, cwd: Path, custom_command: str | None = None) 
     job = bundle["job"]
     prompt = bundle["prompt"]
     provider = cfg["assistant_provider"]
-    cmd = provider_command(provider, prompt, custom_command or cfg.get("assistant_command") or None)
+    custom = custom_command or cfg.get("assistant_command") or None
+    cmd = provider_command(provider, prompt, custom)
+    stdin_text = prompt if provider == "codex" and not custom else None
     print(f"Claimed Project Assistant Job #{job['id']} / {provider}")
     try:
         launch_cmd = prepare_local_command(cmd)
-        result = subprocess.run(launch_cmd, cwd=cwd, capture_output=True, text=True, timeout=60 * 45)
+        result = subprocess.run(launch_cmd, cwd=cwd, capture_output=True, text=True, input=stdin_text, timeout=60 * 45)
         output = (result.stdout or "") + ("\nSTDERR:\n" + result.stderr if result.stderr else "")
         status = "completed" if result.returncode == 0 else "failed"
         assistant_submit_result(cfg, job["id"], status, output)
@@ -245,12 +249,14 @@ def run_once(cfg: dict, repo: Path, custom_command: str | None = None) -> bool:
     job = bundle["job"]
     prompt = build_prompt(bundle)
     provider = cfg["provider"]
-    cmd = provider_command(provider, prompt, custom_command or cfg.get("command") or None)
+    custom = custom_command or cfg.get("command") or None
+    cmd = provider_command(provider, prompt, custom)
+    stdin_text = prompt if provider == "codex" and not custom else None
     print(f"Claimed AI Job #{job['id']} / Task #{job['task_id']} / {provider}")
     print(f"Repository: {repo}")
     try:
         launch_cmd = prepare_local_command(cmd)
-        result = subprocess.run(launch_cmd, cwd=repo, capture_output=True, text=True, timeout=60 * 45)
+        result = subprocess.run(launch_cmd, cwd=repo, capture_output=True, text=True, input=stdin_text, timeout=60 * 45)
         output = (result.stdout or "") + ("\nSTDERR:\n" + result.stderr if result.stderr else "")
         status = "completed" if result.returncode == 0 else "failed"
         evidence = f"provider={provider}; returncode={result.returncode}; repo={repo}"
