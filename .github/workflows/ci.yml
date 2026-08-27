@@ -27,15 +27,19 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Python compile
-        run: python -m py_compile app/main.py app/project_intake.py app/conversation.py local_bridge/providers.py local_bridge/bridge.py local_bridge/project_cli.py project_os.py tools/simulate_design_session.py tools/simulate_autofill_project.py tools/simulate_live_design.py tests/test_live_design.py tests/test_professional_documents.py tests/test_professional_doc_migration.py
+        run: python -m py_compile app/main.py app/project_intake.py app/conversation.py local_bridge/providers.py local_bridge/bridge.py local_bridge/project_cli.py project_os.py tools/simulate_design_session.py tools/simulate_autofill_project.py tools/simulate_live_design.py tools/simulate_project_creation_v012.py tests/test_live_design.py tests/test_professional_documents.py tests/test_professional_doc_migration.py
       - name: Full regression including provider simulations
         run: python -m unittest discover -s tests -v
+      - name: Diagram layout readability tests
+        run: node tests/test_diagram_layout.js
       - name: Design Session materialization simulator
         run: python tools/simulate_design_session.py
       - name: Provisional Autofill materialization simulator
         run: python tools/simulate_autofill_project.py
       - name: Live Design Draft simulator
         run: python tools/simulate_live_design.py
+      - name: Full project documents and diagrams simulator
+        run: python tools/simulate_project_creation_v012.py
       - name: CLI help smoke
         run: |
           python local_bridge/bridge.py -h
@@ -43,4 +47,6 @@ jobs:
           python project_os.py design -h
           python project_os.py create -h
       - name: JavaScript syntax
-        run: node --check app/static/app.js
+        run: |
+          node --check app/static/diagram_layout.js
+          node --check app/static/app.js
