@@ -25,38 +25,27 @@ jobs:
           unzip -o /tmp/v07.zip -d .
 
       - name: Update version and documentation
-        shell: python
+        shell: bash
         run: |
-          from pathlib import Path
-
-          main = Path('app/main.py')
-          text = main.read_text(encoding='utf-8')
-          text = text.replace('version="0.6.0"', 'version="0.7.0"')
-          text = text.replace('"version": "0.6.0"', '"version": "0.7.0"')
-          main.write_text(text, encoding='utf-8')
-
-          readme = Path('README.md')
-          r = readme.read_text(encoding='utf-8')
-          if r.startswith('# Team Project OS V0.2'):
-              r = r.replace('# Team Project OS V0.2', '# Team Project OS V0.7', 1)
-          section = r'''
+          python -c "from pathlib import Path; p=Path('app/main.py'); s=p.read_text(encoding='utf-8').replace('version=\"0.6.0\"','version=\"0.7.0\"').replace('\"version\": \"0.6.0\"','\"version\": \"0.7.0\"'); p.write_text(s,encoding='utf-8')"
+          python -c "from pathlib import Path; p=Path('README.md'); s=p.read_text(encoding='utf-8'); s=s.replace('# Team Project OS V0.2','# Team Project OS V0.7',1) if s.startswith('# Team Project OS V0.2') else s; p.write_text(s,encoding='utf-8')"
+          if ! grep -q '## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성' README.md; then
+            cat >> README.md <<'EOF'
 
 ---
 
 ## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성
 
-V0.7부터 Local AI 실행은 Provider별 Adapter로 분리합니다.
+V0.7부터 Local AI 실행은 Provider별 Adapter로 분리합니다. 긴 프로젝트 Prompt 전체를 Windows 명령줄 인자로 직접 넣지 않습니다.
 
 | Provider | 긴 Prompt 전달 방식 | 기본 명령 |
 |---|---|---|
-| Codex | stdin | `codex exec --skip-git-repo-check -` (Project Interviewer) |
+| Codex | stdin | `codex exec --skip-git-repo-check -` |
 | Claude Code | stdin + 짧은 `-p` 지시 | `claude -p ... --output-format text` |
 | OpenCode | 임시 UTF-8 prompt 파일 + 짧은 run 지시 | `opencode run ...` |
 | Antigravity CLI | 임시 UTF-8 prompt 파일 + headless print | `agy -p ... --output-format text` |
 
-전체 프로젝트 Prompt를 Windows 명령줄 인자로 직접 넣지 않기 때문에 긴 한글 Prompt, 공백, 줄바꿈, npm `.cmd` wrapper에서 발생하던 인자 분리 문제를 피합니다. 성공한 AI 응답은 stdout만 Project OS JSON parser에 전달하고 stderr 진단 출력은 분리합니다.
-
-### CMD에서 AI와 바로 프로젝트 만들기
+CMD에서 웹을 거치지 않고 AI와 바로 프로젝트를 시작할 수 있습니다.
 
 ```bat
 python project_os.py doctor
@@ -64,19 +53,12 @@ python project_os.py server
 python project_os.py create --provider codex --server http://localhost:8000 --member "승훈"
 ```
 
-대화 중 `/status`, `/apply`, `/quit`을 사용할 수 있습니다. Claude Code, OpenCode, Antigravity도 `--provider`만 변경하면 같은 인터페이스를 사용합니다.
+대화 중 `/status`, `/apply`, `/quit`을 사용할 수 있습니다. `--provider`를 `claude`, `opencode`, `antigravity`로 바꾸면 같은 인터페이스를 사용합니다.
 
-CI는 Ubuntu와 Windows에서 가짜 `codex`, `claude`, `opencode`, `agy`를 실제 subprocess로 실행해 한글/공백/여러 줄 Prompt 보존, Windows `.cmd` wrapper, stdout/stderr 분리, 구조화 JSON round-trip, CMD 프로젝트 생성 흐름을 검증합니다.
-'''
-          if '## V0.7 - Provider Adapter 안정화 + CMD 프로젝트 생성' not in r:
-              r += section
-          readme.write_text(r, encoding='utf-8')
-
-          gi = Path('.gitignore')
-          g = gi.read_text(encoding='utf-8')
-          if '.team_project_os_tmp/' not in g:
-              g = g.rstrip() + '\n.team_project_os_tmp/\n'
-          gi.write_text(g, encoding='utf-8')
+CI는 Ubuntu와 Windows에서 가짜 Provider 실행 파일을 실제 subprocess로 실행해 한글/공백/여러 줄 Prompt 보존, Windows `.cmd` wrapper, stdout/stderr 분리, 구조화 JSON round-trip, CMD 프로젝트 생성 흐름을 검증합니다.
+EOF
+          fi
+          grep -qxF '.team_project_os_tmp/' .gitignore || printf '\n.team_project_os_tmp/\n' >> .gitignore
 
       - uses: actions/setup-python@v5
         with:
