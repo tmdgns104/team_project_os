@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import builtins
+import json
 import platform
 import shutil
 import subprocess
 
+from app.conversation import extract_json_object
 from app.live_state import sanitize_live_state
 from local_bridge import project_cli as base
 
 _ORIGINAL_EXTRACT = base.extract_live_delta
+_ORIGINAL_NORMALIZE = base.normalize_ai_result
+_ORIGINAL_DISTILL_PROMPT = base.build_distiller_prompt
 
 
 def read_clipboard_text() -> str:
@@ -61,6 +65,39 @@ def _safe_extract(output: str):
     return answer, safe
 
 
+def professional_normalize(output: str) -> dict:
+    """Keep the original Distiller contract, but preserve delivery-grade fields.
+
+    V0.13's normalizer intentionally kept requirements small. V0.14 needs the
+    Acceptance Criteria / Verification / Priority / Source fields to survive the
+    final `/apply`, otherwise a good Live Draft would regress to TBD after promotion.
+    """
+    result = _ORIGINAL_NORMALIZE(output)
+    try:
+        raw = extract_json_object(output)
+        safe = sanitize_live_state(raw)
+    except Exception:
+        return result
+    for key in ("project_updates", "requirements", "decisions", "document_updates", "design_updates", "pending"):
+        if key in safe:
+            result[key] = safe[key]
+    return result
+
+
+def professional_distiller_prompt(messages: list[dict], autofill_mode: bool = False) -> str:
+    prompt = _ORIGINAL_DISTILL_PROMPT(messages, autofill_mode=autofill_mode)
+    extra = """
+PROFESSIONAL DELIVERABLE FIELDS
+- For every requirement, also include: type, source, priority, acceptance_criteria, verification, owner, traceability.
+- acceptance_criteria must be observable/testable when the transcript supports a concrete criterion; otherwise use a clear TBD instead of inventing a number.
+- verification should say how it will be checked, e.g. Test, Measurement, Inspection, Review, or an appropriate combination.
+- Preserve a user-confirmed schedule such as '10일 V1' or '4주'; do not expand it into a generic 16-week plan. The server scales the Gantt to the actual schedule.
+- Do not replace a professional document with a shorter scratch document merely to summarize the conversation. The server generates the 13 delivery-grade baselines and progressively fills them.
+"""
+    marker = "\nTRANSCRIPT\n"
+    return prompt.replace(marker, "\n" + extra.strip() + marker, 1) if marker in prompt else prompt + "\n" + extra
+
+
 def _paste_aware_input(original_input):
     def wrapped(prompt: str = "") -> str:
         value = original_input(prompt)
@@ -81,6 +118,8 @@ def _paste_aware_input(original_input):
 
 def main(argv=None) -> int:
     base.extract_live_delta = _safe_extract
+    base.normalize_ai_result = professional_normalize
+    base.build_distiller_prompt = professional_distiller_prompt
     if "/paste" not in base.WELCOME:
         base.WELCOME = base.WELCOME.replace(
             "명령: ",
@@ -93,6 +132,8 @@ def main(argv=None) -> int:
     finally:
         builtins.input = original_input
         base.extract_live_delta = _ORIGINAL_EXTRACT
+        base.normalize_ai_result = _ORIGINAL_NORMALIZE
+        base.build_distiller_prompt = _ORIGINAL_DISTILL_PROMPT
 
 
 if __name__ == "__main__":
