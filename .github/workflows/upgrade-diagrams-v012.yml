@@ -22,6 +22,8 @@ jobs:
           node-version: '22'
       - name: Apply V0.12 diagram upgrade
         run: python scripts/upgrade_diagram_ui_v012.py
+      - name: Preserve professional Live Draft documents
+        run: python scripts/fix_live_document_quality_v012.py
       - name: Update version regression for V0.12
         run: >-
           python -c "from pathlib import Path; p=Path('tests/test_professional_doc_migration.py'); s=p.read_text(encoding='utf-8').replace('def test_version_is_v011(self):','def test_version_is_v012(self):').replace('self.assertEqual(app.version, \"0.11.0\")','self.assertEqual(app.version, \"0.12.0\")'); p.write_text(s,encoding='utf-8')"
