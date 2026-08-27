@@ -180,6 +180,7 @@ function renderDocuments(){
   const comments=s.document_comments.filter(c=>c.document_id===d.id);
   const completed=s.documents.filter(x=>['review','approved','complete'].includes(x.status)).length;
   const headings=markdownHeadings(d.content); const quality=documentQuality(d); const editing=state.documentEditMode;
+  const renderedDocumentBody=d.doc_type==='milestone'&&typeof MilestoneGantt!=='undefined'?MilestoneGantt.render(d.content,d.title,s.project.name):renderMarkdownDocument(d.content);
   const toc=headings.length?`<nav class="doc-toc"><div class="doc-toc-title">목차</div>${headings.map(h=>`<a class="lv${h.level}" href="#${h.id}">${esc(h.text)}</a>`).join('')}</nav>`:'';
   return `<div class="documents-head"><div><div class="eyebrow">DELIVERABLE WORKSPACE</div><h2>프로젝트 공식 산출물 ${completed}/${s.documents.length}</h2><p class="muted">Markdown은 원본 포맷으로 유지하고, 기본 화면에서는 실무 보고서 형태로 렌더링합니다.</p></div><div><button class="mini-btn" data-action="export-project">산출물 패키지 ZIP</button></div></div>
   <div class="document-layout professional-doc-layout">
@@ -201,7 +202,7 @@ function renderDocuments(){
           <p class="doc-project-name">${esc(s.project.name)}</p>
           <div class="doc-meta-grid"><div><span>문서 상태</span><strong>${statusChip(d.status)}</strong></div><div><span>작성/갱신</span><strong>${esc(d.updated_by)}</strong></div><div><span>최종 수정</span><strong>${new Date(d.updated_at).toLocaleString('ko-KR')}</strong></div><div><span>Lifecycle</span><strong>${s.project.lifecycle==='draft'?'설계 중 Draft':'Active Project'}</strong></div></div>
         </header>
-        <div class="doc-body-layout">${toc}<section class="doc-content-rendered">${renderMarkdownDocument(d.content)}</section></div>
+        <div class="doc-body-layout">${toc}<section class="doc-content-rendered">${renderedDocumentBody}</section></div>
         <footer class="doc-footer"><span>${esc(s.project.name)}</span><span>${esc(d.title)} · Team Project OS</span></footer>
       </article>`}
       <div class="panel document-comments"><h3>Review / Discussion</h3><form id="documentCommentForm" class="comment-form"><input name="author" value="Team member" aria-label="작성자"><input name="body" placeholder="검토 의견 또는 변경 요청" aria-label="댓글"><button class="mini-btn" type="submit">의견 등록</button></form>${comments.length?comments.map(c=>`<div class="comment"><strong>${esc(c.author)}</strong><span>${esc(c.body)}</span><small>${new Date(c.created_at).toLocaleString('ko-KR')}</small></div>`).join(''):'<div class="empty compact">아직 검토 의견이 없습니다.</div>'}</div>

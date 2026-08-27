@@ -408,22 +408,45 @@ def build_initial_documents(data: dict[str, Any]) -> dict[str, str]:
 - 정책·보안·법규·실제 비용/장비 관련 항목은 담당자 확인 후 확정한다.
 """
 
-    milestone = f"""# {name} 마일스톤 관리표
+    milestone = f"""# {name} 개발 마일스톤 / Gantt
 
 > **기준 일정** · {schedule}
+> **기준 시작일** · TBD · 실제 날짜 확정 전에는 상대 주차 기준 초안
 
-## 1. Milestone Overview
+## 1. Gantt Schedule
 
-| ID | Milestone | 목표 | 주요 산출물 | 완료 조건 (Exit Criteria) | 목표일 | Owner | 상태 |
-|---|---|---|---|---|---|---|---|
-| M1 | Definition Baseline | 프로젝트 정의 확정 | 기획서/요구사항서 | 핵심 목표·범위·REQ Review | TBD | TBD | Draft |
-| M2 | Design Baseline | 구현 가능한 설계 확정 | Process/Architecture/Data Flow | 주요 인터페이스/데이터 흐름 Review | TBD | TBD | Draft |
-| M3 | Build Complete | V1 구현 완료 | 기능/코드/구성 | 핵심 Task 완료 및 통합 가능 | TBD | TBD | Draft |
-| M4 | Verification Complete | 품질 기준 충족 | QA/Evidence | Critical Test PASS, Blocker 0 | TBD | TBD | Draft |
+| Phase | ID | Task | Start Week | End Week | Owner | Status |
+|---|---|---|---|---|---|---|
+| A. 정의 및 설계 | MS-001 | 프로젝트 착수 / 목표·범위 정리 | 1 | 1 | TBD | Draft |
+| A. 정의 및 설계 | MS-002 | 요구사항 분석 및 정의 | 1 | 2 | TBD | Draft |
+| A. 정의 및 설계 | MS-003 | Process / Architecture / Data Flow 설계 | 2 | 4 | TBD | Draft |
+| A. 정의 및 설계 | MS-004 | UI/IA 및 인터페이스 기준선 | 3 | 4 | TBD | Draft |
+| B. 구현 | MS-005 | 개발환경 / 기반 구조 준비 | 4 | 5 | TBD | Todo |
+| B. 구현 | MS-006 | 핵심 기능 구현 | 5 | 9 | TBD | Todo |
+| B. 구현 | MS-007 | 데이터 저장 / 연동 구현 | 6 | 9 | TBD | Todo |
+| B. 구현 | MS-008 | UI / 사용자 기능 구현 | 7 | 10 | TBD | Todo |
+| B. 구현 | MS-009 | 모듈 통합 | 9 | 11 | TBD | Todo |
+| C. 통합 및 검증 | MS-010 | 통합 테스트 | 11 | 13 | TBD | Todo |
+| C. 통합 및 검증 | MS-011 | 시스템 / 비기능 검증 | 12 | 14 | TBD | Todo |
+| C. 통합 및 검증 | MS-012 | 결함 수정 / 안정화 | 13 | 15 | TBD | Todo |
+| D. 완료 | MS-013 | 인수 기준 확인 | 15 | 15 | TBD | Todo |
+| D. 완료 | MS-014 | 문서 / 운영 가이드 정리 | 15 | 16 | TBD | Todo |
+| D. 완료 | MS-015 | 최종 릴리스 / 인수 | 16 | 16 | TBD | Todo |
 
-## 2. Gate 운영 원칙
+## 2. Milestone Gates
+
+| Gate | 목표 | 핵심 산출물 | Exit Criteria | 상태 |
+|---|---|---|---|---|
+| M1 · Definition Baseline | 프로젝트 정의 확정 | 기획서 / 요구사항서 | 핵심 목표·범위·REQ Review | Draft |
+| M2 · Design Baseline | 구현 가능한 설계 확정 | Process / Architecture / Data Flow | 주요 인터페이스/데이터 흐름 Review | Draft |
+| M3 · Build Complete | V1 구현 완료 | 기능 / 코드 / 구성 | 핵심 Task 완료 및 통합 가능 | Draft |
+| M4 · Verification Complete | 품질 기준 충족 | QA / Evidence | Critical Test PASS, Blocker 0 | Draft |
+
+## 3. 일정 운영 원칙
+- Gantt의 주차는 실제 시작일·팀 가용성·의존성이 확정되면 갱신한다.
+- AI가 정한 기간은 `PROVISIONAL` 성격의 계획 초안이며 사람 승인 전 확정 일정으로 간주하지 않는다.
 - Exit Criteria 미충족 시 다음 단계 완료로 표시하지 않는다.
-- 범위 변경이 Milestone에 영향을 주면 일정과 리스크를 함께 갱신한다.
+- 범위/Architecture 변경이 일정에 영향을 주면 관련 Task와 리스크를 함께 갱신한다.
 """
 
     backlog = f"""# {name} Product / Project Backlog

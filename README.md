@@ -1,8 +1,12 @@
-# Team Project OS V0.12
+# Team Project OS V0.13
 
 사람이 처음부터 완벽한 기획서를 작성하지 않아도, **자기 생성형 AI와 충분히 대화해 프로젝트를 구체화한 뒤 `/apply`로 Project OS에 정식 프로젝트를 만드는 팀 협업 프로그램**입니다.
 
 AI는 프로젝트의 필수 의존성이 아니라 선택 가능한 Worker Provider입니다. AI를 사용하지 않는 팀원도 같은 웹 UI와 프로젝트 상태를 사용할 수 있고, AI를 사용하는 팀원은 자기 PC의 **Codex / Claude Code / OpenCode / Antigravity CLI**를 연결합니다.
+
+## V0.13 Development Milestone Gantt
+
+`마일스톤` 문서는 Markdown 원본을 유지하면서 웹에서는 실무 프로젝트 일정표처럼 **Level / Task / Month / Week** 구조의 Gantt로 표시합니다. `Phase | ID | Task | Start Week | End Week | Owner | Status` 표가 Source of Truth이며 Markdown 편집 후 저장하면 Gantt가 즉시 다시 렌더링됩니다. 실제 시작일이 정해진 경우 현재 주차도 강조할 수 있습니다. 일정이 미정이면 16주 상대 주차 기준 초안을 사용하되 확정 일정으로 간주하지 않습니다.
 
 ## V0.12 Human-readable Design Diagrams
 

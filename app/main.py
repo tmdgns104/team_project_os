@@ -26,13 +26,13 @@ ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
 SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Team Project OS", version="0.12.0")
+app = FastAPI(title="Team Project OS", version="0.13.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DOCUMENT_TEMPLATES = [
     ("proposal", "기획서", "# 기획서\n\n> 프로젝트 추진 배경·목표·범위·KPI를 합의하는 기준 문서\n\n## Executive Summary\n\n## 1. 추진 배경 및 문제 정의\n\n## 2. 프로젝트 목표 / KPI\n\n## 3. 이해관계자\n\n## 4. In Scope / Out of Scope\n\n## 5. AS-IS / TO-BE\n\n## 6. 산출물\n\n## 7. 제약사항 / 전제조건\n\n## 8. 리스크\n\n## 9. 승인 기준\n"),
     ("plan", "계획서", "# 프로젝트 계획서\n\n> 실행 일정·WBS·R&R·리스크·변경관리 기준\n\n## 1. 추진 전략\n\n## 2. 범위 / 산출물\n\n## 3. 일정 / 마일스톤\n\n## 4. Work Breakdown Structure\n\n## 5. 역할과 책임 (R&R)\n\n## 6. 제약사항 / 의존성\n\n## 7. 리스크 관리\n\n## 8. 품질 / 검증 계획\n\n## 9. 변경관리\n"),
-    ("milestone", "마일스톤", "# 마일스톤 관리표\n\n| ID | Milestone | 목표 | 주요 산출물 | Entry Criteria | Exit Criteria | 목표일 | Owner | 상태 |\n|---|---|---|---|---|---|---|---|---|\n| M1 | Definition Baseline | 요구사항 기준선 | 기획/요구사항 | TBD | 핵심 REQ Review | TBD | TBD | Draft |\n| M2 | Design Baseline | 설계 기준선 | Process/Architecture/Data Flow | M1 | 설계 Review | TBD | TBD | Draft |\n"),
+    ("milestone", "마일스톤", "# 개발 마일스톤 / Gantt\n\n> **기준 시작일** · TBD · 실제 날짜가 정해지기 전에는 상대 주차 기준 초안\n\n## Gantt Schedule\n\n| Phase | ID | Task | Start Week | End Week | Owner | Status |\n|---|---|---|---|---|---|---|\n| A. 정의 및 설계 | MS-001 | 프로젝트 착수 / 목표·범위 정리 | 1 | 1 | TBD | Draft |\n| A. 정의 및 설계 | MS-002 | 요구사항 분석 및 정의 | 1 | 2 | TBD | Draft |\n| A. 정의 및 설계 | MS-003 | Process / Architecture / Data Flow 설계 | 2 | 4 | TBD | Draft |\n| A. 정의 및 설계 | MS-004 | UI/IA 및 인터페이스 기준선 | 3 | 4 | TBD | Draft |\n| B. 구현 | MS-005 | 개발환경 / 기반 구조 준비 | 4 | 5 | TBD | Todo |\n| B. 구현 | MS-006 | 핵심 기능 구현 | 5 | 9 | TBD | Todo |\n| B. 구현 | MS-007 | 데이터 저장 / 연동 구현 | 6 | 9 | TBD | Todo |\n| B. 구현 | MS-008 | UI / 사용자 기능 구현 | 7 | 10 | TBD | Todo |\n| B. 구현 | MS-009 | 모듈 통합 | 9 | 11 | TBD | Todo |\n| C. 통합 및 검증 | MS-010 | 통합 테스트 | 11 | 13 | TBD | Todo |\n| C. 통합 및 검증 | MS-011 | 시스템 / 비기능 검증 | 12 | 14 | TBD | Todo |\n| C. 통합 및 검증 | MS-012 | 결함 수정 / 안정화 | 13 | 15 | TBD | Todo |\n| D. 완료 | MS-013 | 인수 기준 확인 | 15 | 15 | TBD | Todo |\n| D. 완료 | MS-014 | 문서 / 운영 가이드 정리 | 15 | 16 | TBD | Todo |\n| D. 완료 | MS-015 | 최종 릴리스 / 인수 | 16 | 16 | TBD | Todo |\n\n> 이 일정은 프로젝트 유형·실제 시작일·인력·제약이 정해지면 Live Design에서 갱신합니다.\n"),
     ("backlog", "백로그", "# Product / Project Backlog\n\n| ID | Epic/Feature | 작업 항목 | Priority | Owner | Status | Requirement | Definition of Done |\n|---|---|---|---|---|---|---|---|\n| BL-001 | Definition | 핵심 요구사항 상세화 | High | TBD | Todo | REQ-* | Review 완료 |\n"),
     ("requirements", "요구사항 정의서", "# 요구사항 정의서\n\n> 구현·검증 가능한 Requirement 기준선\n\n## 1. 작성 원칙\n\n## 2. Functional Requirements\n\n| ID | Type | 요구사항 | 상세 | Priority | Acceptance Criteria | Verification | 상태 |\n|---|---|---|---|---|---|---|---|\n| REQ-001 | Functional | TBD | TBD | High | TBD | Test/Review | Draft |\n\n## 3. Non-Functional Requirements\n\n## 4. Traceability Matrix\n"),
     ("service_policy", "서비스 및 운영 정책서", "# 서비스 및 운영 정책서\n\n> 실제 운영 시 일관된 의사결정을 위한 정책 기준\n\n## 1. 목적 / 적용 범위\n\n## 2. 사용자 / 역할 / 권한 정책\n\n| Role | 허용 기능 | 제한 | 승인자 |\n|---|---|---|---|\n| TBD | TBD | TBD | TBD |\n\n## 3. 데이터 수집 / 보관 / 삭제 정책\n\n## 4. 장애 / 예외 / 복구 정책\n\n## 5. 로그 / 감사 / 모니터링 정책\n\n## 6. 배포 / 변경 / Rollback 정책\n\n## 7. 보안 / 개인정보 / 규제 Open Items\n"),
@@ -919,7 +919,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "version": "0.11.0"}
+    return {"status": "ok", "version": app.version}
 
 
 @app.get("/api/project-intake/meta")
