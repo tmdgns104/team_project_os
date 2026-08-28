@@ -1,6 +1,6 @@
 const state = {
   projects: [], projectId: null, snapshot: null, view: 'overview', ws: null, selectedDocumentId: null, documentEditMode: false,
-  accessKey: localStorage.getItem('project_os_access_key') || ''
+  accessKey: sessionStorage.getItem('project_os_access_key') || ''
 };
 const titles = {
   overview:'Overview', definition:'Goal & Requirements', assistant:'AI Project Assistant', documents:'Project Documents', traceability:'Traceability', progress:'Development Progress',
@@ -54,15 +54,21 @@ async function loadSnapshot(){ state.snapshot=await api(`/api/projects/${state.p
 function connectWs(){
   if(state.ws) state.ws.close();
   const proto=location.protocol==='https:'?'wss':'ws';
-  const key=encodeURIComponent(state.accessKey||'');
-  state.ws=new WebSocket(`${proto}://${location.host}/ws/projects/${state.projectId}?key=${key}`);
+  const protocols=['project-os'];
+  if(state.accessKey){
+    const bytes=new TextEncoder().encode(state.accessKey);
+    let binary=''; bytes.forEach(byte=>{binary+=String.fromCharCode(byte)});
+    const encoded=btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    protocols.push(`access-key.${encoded}`);
+  }
+  state.ws=new WebSocket(`${proto}://${location.host}/ws/projects/${state.projectId}`,protocols);
   state.ws.onopen=()=>{ $('#liveText').textContent='실시간 공유 연결됨'; };
   state.ws.onmessage=e=>{ let msg={}; try{msg=JSON.parse(e.data||'{}')}catch(_e){}; if(msg.scope==='live_draft') $('#liveText').textContent='Live Draft 자동 반영됨'; if(msg.scope==='live_draft_promoted') $('#liveText').textContent='정식 프로젝트로 승격됨'; loadSnapshot().catch(()=>{}); };
   state.ws.onclose=()=>{ $('#liveText').textContent='연결 끊김 · 새로고침 필요'; };
 }
 function setAccessKey(){
   const v=prompt('서버에 APP_ACCESS_KEY를 설정했다면 접속키를 입력하세요.\n설정하지 않았다면 비워두세요.',state.accessKey||'');
-  if(v===null) return; state.accessKey=v.trim(); localStorage.setItem('project_os_access_key',state.accessKey); loadProjects().catch(e=>toast(e.message));
+  if(v===null) return; state.accessKey=v.trim(); sessionStorage.setItem('project_os_access_key',state.accessKey); loadProjects().catch(e=>toast(e.message));
 }
 function render(){
   if(!state.snapshot){ $('#content').innerHTML='<div class="panel onboarding"><h2>새 프로젝트를 시작하세요</h2><p class="muted">AI가 있으면 대화만으로 시작하고, 없으면 직접 입력할 수 있습니다.</p><div class="onboarding-actions"><button class="primary-btn" data-action="start-ai-project">✦ AI와 대화하며 시작</button><button class="ghost-btn" data-action="new-project">직접 입력해서 시작</button></div></div>'; bindViewActions(); return; }

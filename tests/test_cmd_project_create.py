@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -18,6 +20,7 @@ class Args:
     cwd = "."
     command = ""
     initial = "HMI MES 프로그램을 제작해 보고 싶어"
+    no_live = True
 
 
 AI_OUTPUT = json.dumps({
@@ -45,12 +48,15 @@ class CmdProjectCreateTests(unittest.TestCase):
             stderr="diagnostic text that must not corrupt JSON",
             command_display="codex exec --skip-git-repo-check -",
         )
-        with patch("local_bridge.project_cli.run_provider", return_value=fake_result), \
-             patch("builtins.input", side_effect=["/apply"]), \
-             patch("local_bridge.project_cli.apply_to_server", return_value={"id": 77, "name": "HMI MES 프로그램 실습"}) as apply_mock:
-            out = io.StringIO()
-            with redirect_stdout(out):
-                rc = interactive_create(Args())
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            args = Args()
+            args.session_file = str(Path(temporary_directory) / "session.json")
+            with patch("local_bridge.project_cli.run_provider", return_value=fake_result), \
+                 patch("builtins.input", side_effect=["/apply"]), \
+                 patch("local_bridge.project_cli.apply_to_server", return_value={"id": 77, "name": "HMI MES 프로그램 실습"}) as apply_mock:
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    rc = interactive_create(args)
         self.assertEqual(rc, 0)
         self.assertTrue(apply_mock.called)
         brief = apply_mock.call_args.args[3]

@@ -98,6 +98,7 @@ class Args:
     initial = "HMI MES를 만들어보고 싶어. 세부적인 건 잘 모르겠으니까 적당한 걸로 알아서 임시로 다 정해줘"
     session_file = ""
     autofill = False
+    no_live = True
 
 
 class AutofillModeTests(unittest.TestCase):

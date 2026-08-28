@@ -105,6 +105,7 @@ class Args:
     command = ""
     initial = "HMI MES 프로그램을 만들어보고 싶어"
     session_file = ""
+    no_live = True
 
 
 class DesignSessionTests(unittest.TestCase):

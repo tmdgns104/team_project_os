@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.conversation import PROJECT_FIELDS, merge_project_brief, normalize_ai_result
 from app.project_intake import evaluate_intake
 from local_bridge.providers import SUPPORTED_PROVIDERS, print_doctor, run_provider
+from local_bridge.storage import atomic_write_json
 
 
 WELCOME = (
@@ -20,7 +23,7 @@ WELCOME = (
     "명령: /status, /autofill on|off, /preview, /apply, /discard, /quit"
 )
 
-SESSION_ROOT = Path.home() / ".team_project_os" / "design_sessions"
+DEFAULT_SESSION_ROOT = Path.home() / ".team_project_os" / "design_sessions"
 
 
 def http_json(method: str, url: str, payload=None, access_key: str = ""):
@@ -420,14 +423,20 @@ def _session_file(args) -> Path:
     explicit = getattr(args, "session_file", "") or ""
     if explicit:
         return Path(explicit).expanduser().resolve()
-    SESSION_ROOT.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return SESSION_ROOT / f"design-{stamp}-{args.provider}.json"
+    configured_root = os.getenv("PROJECT_OS_SESSION_DIR", "").strip()
+    session_root = (
+        Path(configured_root).expanduser().resolve()
+        if configured_root
+        else DEFAULT_SESSION_ROOT
+    )
+    session_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    suffix = uuid4().hex[:8]
+    return session_root / f"design-{stamp}-{suffix}-{args.provider}.json"
 
 
 def save_session(path: Path, *, provider: str, member: str, messages: list[dict], applied_project: dict | None = None, autofill_mode: bool = False, draft_project: dict | None = None, live_state: dict | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
+    atomic_write_json(path, {
         "provider": provider,
         "member": member,
         "messages": messages,
@@ -436,7 +445,7 @@ def save_session(path: Path, *, provider: str, member: str, messages: list[dict]
         "live_state": live_state or blank_live_state(),
         "autofill_mode": autofill_mode,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    })
 
 
 def print_session_status(path: Path, provider: str, messages: list[dict], autofill_mode: bool = False, draft_project: dict | None = None) -> None:

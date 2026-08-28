@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -11,12 +12,14 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from local_bridge.providers import SUPPORTED_PROVIDERS, print_doctor, run_provider
+from local_bridge.storage import atomic_write_json
 
-CONFIG_PATH = Path.home() / ".team_project_os_bridge.json"
+CONFIG_PATH = Path(
+    os.getenv("PROJECT_OS_BRIDGE_CONFIG", Path.home() / ".team_project_os_bridge.json")
+).expanduser()
 
 
 def http_json(method: str, url: str, payload=None, headers=None):
@@ -40,7 +43,11 @@ def load_config() -> dict:
 
 
 def save_config(data: dict) -> None:
-    CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(CONFIG_PATH, data)
+
+
+def bridge_auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 
@@ -133,15 +140,17 @@ def assistant_register(args):
 
 
 def assistant_submit_result(cfg: dict, job_id: int, status: str, output: str):
-    q = urlencode({"token": cfg["assistant_token"]})
-    http_json("POST", f"{cfg['assistant_server']}/api/assistant-bridge/results?{q}", {
+    http_json("POST", f"{cfg['assistant_server']}/api/assistant-bridge/results", {
         "job_id": job_id, "status": status, "output": output
-    })
+    }, bridge_auth_headers(cfg["assistant_token"]))
 
 
 def assistant_run_once(cfg: dict, cwd: Path, custom_command: str | None = None) -> bool:
-    q = urlencode({"token": cfg["assistant_token"]})
-    bundle = http_json("GET", f"{cfg['assistant_server']}/api/assistant-bridge/jobs?{q}")
+    bundle = http_json(
+        "GET",
+        f"{cfg['assistant_server']}/api/assistant-bridge/jobs",
+        headers=bridge_auth_headers(cfg["assistant_token"]),
+    )
     if not bundle or not bundle.get("job"):
         print("No queued Project Assistant message.")
         return False
@@ -196,15 +205,17 @@ def assistant_run(args):
 
 
 def submit_result(cfg, job_id: int, status: str, output: str, evidence: str):
-    q = urlencode({"token": cfg["token"]})
-    http_json("POST", f"{cfg['server']}/api/bridge/results?{q}", {
+    http_json("POST", f"{cfg['server']}/api/bridge/results", {
         "job_id": job_id, "status": status, "output": output, "evidence": evidence
-    })
+    }, bridge_auth_headers(cfg["token"]))
 
 
 def run_once(cfg: dict, repo: Path, custom_command: str | None = None) -> bool:
-    q = urlencode({"token": cfg["token"]})
-    bundle = http_json("GET", f"{cfg['server']}/api/bridge/jobs?{q}")
+    bundle = http_json(
+        "GET",
+        f"{cfg['server']}/api/bridge/jobs",
+        headers=bridge_auth_headers(cfg["token"]),
+    )
     if not bundle or not bundle.get("job"):
         print("No queued AI job.")
         return False

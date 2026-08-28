@@ -1,33 +1,108 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import io
 import json
+import logging
 import os
 import re
 import secrets
 import sqlite3
+from time import perf_counter
 import zipfile
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.project_intake import build_initial_documents, evaluate_intake, intake_metadata
 from app.conversation import PROJECT_FIELDS, build_interviewer_prompt, combine_proposals, merge_project_brief, normalize_ai_result
+from app.runtime import load_runtime_settings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+SETTINGS = load_runtime_settings()
 DB_PATH = Path(os.getenv("PROJECT_OS_DB", BASE_DIR / "project_os.db"))
-ACCESS_KEY = os.getenv("APP_ACCESS_KEY", "")
-SEED_DEMO = os.getenv("PROJECT_OS_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"}
+ACCESS_KEY = SETTINGS.access_key
+SEED_DEMO = SETTINGS.seed_demo
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+LOGGER = logging.getLogger("project_os")
 
-app = FastAPI(title="Team Project OS", version="0.13.0")
+
+@asynccontextmanager
+async def application_lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(
+    title="Team Project OS",
+    version="0.13.0",
+    docs_url="/docs" if SETTINGS.interactive_docs_enabled else None,
+    redoc_url="/redoc" if SETTINGS.interactive_docs_enabled else None,
+    openapi_url="/openapi.json" if SETTINGS.interactive_docs_enabled else None,
+    lifespan=application_lifespan,
+)
+if SETTINGS.production:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(SETTINGS.allowed_hosts))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def _apply_defensive_headers(response: Response, *, api_response: bool) -> None:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+    )
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; "
+        "base-uri 'self'; frame-ancestors 'none'",
+    )
+    if api_response:
+        response.headers.setdefault("Cache-Control", "no-store")
+
+
+@app.middleware("http")
+async def operational_safety_middleware(request: Request, call_next):
+    """Apply small, explicit controls that are useful with or without a proxy."""
+
+    started = perf_counter()
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_size = int(content_length)
+        except ValueError:
+            declared_size = -1
+        if declared_size < 0:
+            response = JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
+        elif declared_size > SETTINGS.max_request_bytes:
+            response = JSONResponse({"detail": "Request body too large"}, status_code=413)
+        else:
+            response = await call_next(request)
+    else:
+        response = await call_next(request)
+
+    _apply_defensive_headers(
+        response, api_response=request.url.path.startswith("/api/")
+    )
+    response.headers.setdefault("X-Request-Duration-Ms", f"{(perf_counter() - started) * 1000:.1f}")
+    LOGGER.info(
+        "%s %s -> %s (%.1f ms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        (perf_counter() - started) * 1000,
+    )
+    return response
 
 DOCUMENT_TEMPLATES = [
     ("proposal", "기획서", "# 기획서\n\n> 프로젝트 추진 배경·목표·범위·KPI를 합의하는 기준 문서\n\n## Executive Summary\n\n## 1. 추진 배경 및 문제 정의\n\n## 2. 프로젝트 목표 / KPI\n\n## 3. 이해관계자\n\n## 4. In Scope / Out of Scope\n\n## 5. AS-IS / TO-BE\n\n## 6. 산출물\n\n## 7. 제약사항 / 전제조건\n\n## 8. 리스크\n\n## 9. 승인 기준\n"),
@@ -50,12 +125,19 @@ DOCUMENT_TEMPLATES = [
 
 @contextmanager
 def db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(
+        DB_PATH,
+        timeout=SETTINGS.sqlite_busy_timeout_ms / 1000,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {SETTINGS.sqlite_busy_timeout_ms}")
     try:
         yield conn
         conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -65,8 +147,25 @@ def now() -> str:
 
 
 def require_access(x_access_key: str | None = Header(default=None)) -> None:
-    if ACCESS_KEY and x_access_key != ACCESS_KEY:
+    if ACCESS_KEY and (
+        not x_access_key or not secrets.compare_digest(x_access_key, ACCESS_KEY)
+    ):
         raise HTTPException(status_code=401, detail="Invalid access key")
+
+
+def bridge_bearer_token(
+    authorization: str | None,
+    legacy_query_token: str | None,
+) -> str:
+    """Prefer a bearer header while retaining the V0.14 query-token contract."""
+
+    if authorization:
+        scheme, separator, credential = authorization.partition(" ")
+        if separator and scheme.lower() == "bearer" and credential.strip():
+            return credential.strip()
+    if legacy_query_token:
+        return legacy_query_token
+    raise HTTPException(status_code=401, detail="Missing bridge token")
 
 
 def rowdict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -248,8 +347,13 @@ class ConnectionManager:
     def __init__(self) -> None:
         self.connections: dict[int, set[WebSocket]] = {}
 
-    async def connect(self, project_id: int, websocket: WebSocket) -> None:
-        await websocket.accept()
+    async def connect(
+        self,
+        project_id: int,
+        websocket: WebSocket,
+        subprotocol: str | None = None,
+    ) -> None:
+        await websocket.accept(subprotocol=subprotocol)
         self.connections.setdefault(project_id, set()).add(websocket)
 
     def disconnect(self, project_id: int, websocket: WebSocket) -> None:
@@ -272,6 +376,8 @@ manager = ConnectionManager()
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS projects (
@@ -789,7 +895,7 @@ def traceability_markdown(explicit: list[dict[str, Any]], derived: list[dict[str
     for link in [*explicit, *derived]:
         src = f"{link['source_type']}:{link['source_ref']}"
         dst = f"{link['target_type']}:{link['target_ref']}"
-        note = str(link.get("note", "")).replace("|", "\|")
+        note = str(link.get("note", "")).replace("|", r"\|")
         lines.append(f"| {src} | {link['relation']} | {dst} | {note} |")
     if len(lines) == 4:
         lines.append("| - | - | - | 아직 연결 없음 |")
@@ -907,11 +1013,6 @@ def seed_demo(conn: sqlite3.Connection) -> None:
     add_activity(conn, p, "decision", "ADR-001 MQTT QoS 1 사용이 승인되었습니다.", "Team")
 
 
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
-
-
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -920,6 +1021,22 @@ def index() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/health/live")
+def health_live() -> dict[str, str]:
+    return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/health/ready")
+def health_ready() -> dict[str, str]:
+    try:
+        with db() as conn:
+            conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+    except sqlite3.Error as exc:
+        LOGGER.error("Database readiness check failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Database is not ready") from exc
+    return {"status": "ok", "database": "ready", "version": app.version}
 
 
 @app.get("/api/project-intake/meta")
@@ -1036,7 +1153,11 @@ async def conversation_message(session_id: int, payload: ConversationMessageCrea
 
 
 @app.get("/api/assistant-bridge/jobs")
-def assistant_bridge_jobs(token: str = Query(...)):
+def assistant_bridge_jobs(
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    token = bridge_bearer_token(authorization, token)
     with db() as conn:
         bridge = conn.execute("SELECT * FROM assistant_bridges WHERE token=?", (token,)).fetchone()
         if not bridge:
@@ -1056,7 +1177,12 @@ def assistant_bridge_jobs(token: str = Query(...)):
 
 
 @app.post("/api/assistant-bridge/results")
-async def assistant_bridge_result(payload: ConversationBridgeResult, token: str = Query(...)):
+async def assistant_bridge_result(
+    payload: ConversationBridgeResult,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    token = bridge_bearer_token(authorization, token)
     with db() as conn:
         bridge = conn.execute("SELECT * FROM assistant_bridges WHERE token=?", (token,)).fetchone()
         if not bridge:
@@ -1691,7 +1817,11 @@ async def create_ai_job(project_id: int, payload: AIJobCreate, x_access_key: str
 
 
 @app.get("/api/bridge/jobs")
-def bridge_jobs(token: str = Query(...)):
+def bridge_jobs(
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    token = bridge_bearer_token(authorization, token)
     with db() as conn:
         bridge = conn.execute("SELECT * FROM bridges WHERE token=?", (token,)).fetchone()
         if not bridge:
@@ -1718,7 +1848,12 @@ def bridge_jobs(token: str = Query(...)):
 
 
 @app.post("/api/bridge/results")
-async def bridge_result(payload: AIResult, token: str = Query(...)):
+async def bridge_result(
+    payload: AIResult,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    token = bridge_bearer_token(authorization, token)
     with db() as conn:
         bridge = conn.execute("SELECT * FROM bridges WHERE token=?", (token,)).fetchone()
         if not bridge:
@@ -1738,16 +1873,34 @@ async def bridge_result(payload: AIResult, token: str = Query(...)):
 
 @app.websocket("/ws/projects/{project_id}")
 async def websocket_endpoint(websocket: WebSocket, project_id: int):
-    key = websocket.query_params.get("key", "")
-    if ACCESS_KEY and key != ACCESS_KEY:
+    requested_protocols = [
+        value.strip()
+        for value in websocket.headers.get("sec-websocket-protocol", "").split(",")
+        if value.strip()
+    ]
+    key = ""
+    for protocol in requested_protocols:
+        if not protocol.startswith("access-key."):
+            continue
+        encoded = protocol.removeprefix("access-key.")
+        try:
+            padding = "=" * (-len(encoded) % 4)
+            key = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            key = ""
+        break
+    # V0.14 compatibility: old clients may still send the key in the query string.
+    if not key:
+        key = websocket.query_params.get("key", "")
+    if ACCESS_KEY and (
+        not key or not secrets.compare_digest(key, ACCESS_KEY)
+    ):
         await websocket.close(code=4401)
         return
-    await manager.connect(project_id, websocket)
+    accepted_protocol = "project-os" if "project-os" in requested_protocols else None
+    await manager.connect(project_id, websocket, accepted_protocol)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(project_id, websocket)
-
-
-init_db()
