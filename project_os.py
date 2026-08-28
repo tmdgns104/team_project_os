@@ -22,7 +22,7 @@ def _add_design_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Team Project OS V0.15")
+    parser = argparse.ArgumentParser(description="Team Project OS V0.16")
     sub = parser.add_subparsers(dest="sub", required=True)
 
     design = sub.add_parser("design", help="AI와 자유롭게 프로젝트를 구체화한 뒤 /apply로 생성")
@@ -42,7 +42,7 @@ def main() -> int:
         return 0
     if args.sub == "server":
         return subprocess.call([
-            sys.executable, "-m", "uvicorn", "app.main_v015:app",
+            sys.executable, "-m", "uvicorn", "app.main_v016:app",
             "--host", args.host, "--port", args.port,
         ])
 

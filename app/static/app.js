@@ -1,9 +1,10 @@
 const state = {
   projects: [], projectId: null, snapshot: null, view: 'overview', ws: null, selectedDocumentId: null, documentEditMode: false,
-  accessKey: sessionStorage.getItem('project_os_access_key') || ''
+  accessKey: sessionStorage.getItem('project_os_access_key') || '',
+  conversationImport: {provider:null,sessions:[],selected:null,preview:null,loading:false}
 };
 const titles = {
-  overview:'Overview', definition:'Goal & Requirements', assistant:'AI Project Assistant', documents:'Project Documents', traceability:'Traceability', progress:'Development Progress',
+  overview:'Overview', definition:'Goal & Requirements', assistant:'AI Project Assistant', conversations:'AI Conversations', documents:'Project Documents', traceability:'Traceability', progress:'Development Progress',
   process:'System Process', architecture:'Architecture', dataflow:'Data Flow',
   ideas:'Ideas & Decisions', team:'Team & AI'
 };
@@ -18,7 +19,7 @@ const api = async (url, opts={}) => {
 };
 function toast(msg){ const el=$('#toast'); el.textContent=msg; el.classList.remove('hidden'); setTimeout(()=>el.classList.add('hidden'),2400); }
 function statusChip(status){
-  const map={done:['완료','good'],in_progress:['진행중','ai'],review:['검토','warn'],todo:['예정',''],blocked:['차단','danger'],defined:['정의됨','good'],accepted:['승인','good'],provisional:['AI 임시','warn'],open:['Open',''],discussing:['논의중','warn'],queued:['대기','warn'],claimed:['실행중','ai'],completed:['완료','good'],failed:['실패','danger'],draft:['초안',''],approved:['승인됨','good'],complete:['완료','good']};
+  const map={done:['완료','good'],in_progress:['진행중','ai'],review:['검토','warn'],todo:['예정',''],blocked:['차단','danger'],defined:['정의됨','good'],accepted:['승인','good'],provisional:['AI 임시','warn'],pending:['확인 필요','warn'],rejected:['제외','danger'],alternative:['대안',''],open:['Open',''],discussing:['논의중','warn'],queued:['대기','warn'],claimed:['실행중','ai'],completed:['완료','good'],failed:['실패','danger'],draft:['초안',''],drafted:['Live Draft','warn'],applied:['적용됨','good'],cancelled:['취소',''],approved:['승인됨','good'],complete:['완료','good']};
   const [t,c]=map[status]||[status,'']; return `<span class="chip ${c}">${esc(t)}</span>`;
 }
 async function init(){
@@ -37,6 +38,7 @@ function bindNav(){
     const b=e.target.closest('.nav-item'); if(!b) return;
     state.view=b.dataset.view; document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x===b));
     $('#pageTitle').textContent=titles[state.view]; render();
+    if(state.view==='conversations') loadConversationSessions().catch(e=>toast(e.message));
   });
 }
 async function loadProjects(){
@@ -50,7 +52,15 @@ async function loadProjects(){
   select.onchange=async()=>{ state.projectId=Number(select.value); await loadSnapshot(); connectWs(); };
   if(state.projectId){ await loadSnapshot(); connectWs(); } else { state.snapshot=null; render(); }
 }
-async function loadSnapshot(){ state.snapshot=await api(`/api/projects/${state.projectId}/snapshot`); render(); }
+function withLiveDraftOverlay(snapshot){
+  const live=snapshot.live_draft; if(!live) return snapshot;
+  snapshot.documents=live.documents||snapshot.documents;
+  snapshot.nodes=live.nodes||snapshot.nodes; snapshot.edges=live.edges||snapshot.edges;
+  snapshot.requirements=(live.requirements||[]).map((item,index)=>({id:`draft-req-${index}`,title:`${item.ref||''} ${item.title||''}`.trim(),detail:item.detail||'',status:item.status||'defined'}));
+  snapshot.decisions=(live.decisions||[]).map((item,index)=>({id:`draft-dec-${index}`,title:`${item.ref||''} ${item.title||''}`.trim(),body:item.body||'',status:item.status||'provisional',author:'V0.16 Conversation Import'}));
+  return snapshot;
+}
+async function loadSnapshot(){ state.snapshot=withLiveDraftOverlay(await api(`/api/projects/${state.projectId}/snapshot`)); render(); }
 function connectWs(){
   if(state.ws) state.ws.close();
   const proto=location.protocol==='https:'?'wss':'ws';
@@ -63,7 +73,7 @@ function connectWs(){
   }
   state.ws=new WebSocket(`${proto}://${location.host}/ws/projects/${state.projectId}`,protocols);
   state.ws.onopen=()=>{ $('#liveText').textContent='실시간 공유 연결됨'; };
-  state.ws.onmessage=e=>{ let msg={}; try{msg=JSON.parse(e.data||'{}')}catch(_e){}; if(msg.scope==='live_draft') $('#liveText').textContent='Live Draft 자동 반영됨'; if(msg.scope==='live_draft_promoted') $('#liveText').textContent='정식 프로젝트로 승격됨'; loadSnapshot().catch(()=>{}); };
+  state.ws.onmessage=e=>{ let msg={}; try{msg=JSON.parse(e.data||'{}')}catch(_e){}; if(['live_draft','conversation_live_draft'].includes(msg.scope)) $('#liveText').textContent='Live Draft 자동 반영됨'; if(['live_draft_promoted','conversation_import_applied'].includes(msg.scope)) $('#liveText').textContent='정식 프로젝트에 적용됨'; loadSnapshot().catch(()=>{}); };
   state.ws.onclose=()=>{ $('#liveText').textContent='연결 끊김 · 새로고침 필요'; };
 }
 function setAccessKey(){
@@ -72,8 +82,9 @@ function setAccessKey(){
 }
 function render(){
   if(!state.snapshot){ $('#content').innerHTML='<div class="panel onboarding"><h2>새 프로젝트를 시작하세요</h2><p class="muted">AI가 있으면 대화만으로 시작하고, 없으면 직접 입력할 수 있습니다.</p><div class="onboarding-actions"><button class="primary-btn" data-action="start-ai-project">✦ AI와 대화하며 시작</button><button class="ghost-btn" data-action="new-project">직접 입력해서 시작</button></div></div>'; bindViewActions(); return; }
-  const fn={overview:renderOverview,definition:renderDefinition,assistant:renderAssistant,documents:renderDocuments,traceability:renderTraceability,progress:renderProgress,process:()=>renderDiagram('process'),architecture:()=>renderDiagram('architecture'),dataflow:()=>renderDiagram('dataflow'),ideas:renderIdeas,team:renderTeam}[state.view];
-  const draftBanner=state.snapshot.project.lifecycle==='draft'?`<div class="notice" style="margin-bottom:16px"><strong>🟡 AI Design Live Draft</strong> · AI와 대화 중 결정되는 내용이 실시간 반영됩니다. <strong>/apply 전에는 정식 확정 프로젝트가 아닙니다.</strong><br><small>Documents · Requirements · Decisions · Process/Architecture/Data Flow가 WebSocket으로 자동 갱신됩니다.</small></div>`:'';
+  const fn={overview:renderOverview,definition:renderDefinition,assistant:renderAssistant,conversations:renderConversations,documents:renderDocuments,traceability:renderTraceability,progress:renderProgress,process:()=>renderDiagram('process'),architecture:()=>renderDiagram('architecture'),dataflow:()=>renderDiagram('dataflow'),ideas:renderIdeas,team:renderTeam}[state.view];
+  const importedDraft=state.snapshot.live_draft;
+  const draftBanner=importedDraft?`<div class="notice import-draft-banner" style="margin-bottom:16px"><div><strong>🟡 Native Conversation Live Draft</strong> · 활성 Source of Truth는 아직 변경되지 않았습니다.<br><small>13개 문서와 3개 Design을 검토한 뒤 Apply하거나 폐기하세요.</small></div><div><button class="primary-btn" data-action="apply-import-draft" data-view="${importedDraft.import_id}">Apply</button> <button class="ghost-btn" data-action="cancel-import" data-view="${importedDraft.import_id}">폐기</button></div></div>`:(state.snapshot.project.lifecycle==='draft'?`<div class="notice" style="margin-bottom:16px"><strong>🟡 AI Design Live Draft</strong> · AI와 대화 중 결정되는 내용이 실시간 반영됩니다. <strong>/apply 전에는 정식 확정 프로젝트가 아닙니다.</strong><br><small>Documents · Requirements · Decisions · Process/Architecture/Data Flow가 WebSocket으로 자동 갱신됩니다.</small></div>`:'');
   $('#content').innerHTML=draftBanner+fn(); bindViewActions();
 }
 function renderOverview(){
@@ -131,6 +142,72 @@ function renderAssistant(){
   </div>`;
 }
 
+function renderConversations(){
+  const ci=state.conversationImport, provider=ci.provider||{};
+  const providerBox=provider.detected
+    ?`<div class="notice"><strong>Codex ${esc(provider.version||'')}</strong><br><small>${esc(provider.message||'로컬 세션 저장소를 읽기 전용으로 조회합니다.')}</small></div>`
+    :`<div class="notice danger"><strong>Codex not detected</strong><br><small>서버와 기존 Project OS 기능은 정상입니다. 아래 Transcript Paste fallback을 사용할 수 있습니다.</small></div>`;
+  const sessions=ci.sessions||[];
+  const sessionRows=sessions.length?sessions.map(item=>`<button class="conversation-session ${ci.selected?.session?.session_id===item.session_id?'active':''}" data-action="select-import-session" data-view="${esc(item.session_id)}">
+    <span class="session-main"><strong>${esc(item.title)}</strong><small>${esc(item.provider)} · ${item.message_count} messages · ${item.updated_at?new Date(item.updated_at).toLocaleString('ko-KR'):'시간 미상'}</small>${item.error?`<small class="danger-text">${esc(item.error)}</small>`:''}</span>
+    <span>${item.imported?`<span class="chip good">Imported · ${item.imported_cursor}</span>`:'<span class="chip">New</span>'}</span>
+  </button>`).join(''):'<div class="empty">표시할 Codex Session이 없습니다.</div>';
+  const selected=ci.selected;
+  const messages=selected?.messages||[];
+  const selectedPanel=selected?`<div class="panel conversation-preview">
+    <div class="conversation-preview-head"><div><div class="eyebrow">SELECTED SESSION</div><h2>${esc(selected.session.title)}</h2><p class="muted">Session ${esc(selected.session.session_id)} · 이전 Import cursor ${selected.imported_cursor}</p></div><button class="primary-btn" data-action="preview-import" ${ci.loading||!selected.analysis_messages.length?'disabled':''}>${ci.loading?'분석 중…':`다음 ${selected.analysis_messages.length}개 분석`}</button></div>
+    <div class="analysis-range"><strong>이번 분석 범위</strong> · cursor &gt; ${selected.imported_cursor} ~ ${selected.next_to_cursor} · ${selected.analysis_messages.length}/${selected.total_unimported} messages${selected.remaining_after_chunk?` · 이후 ${selected.remaining_after_chunk}개 남음`:''}${selected.imported_at?` · 마지막 Import ${new Date(selected.imported_at).toLocaleString('ko-KR')}`:''}</div>
+    <div class="native-transcript">${messages.map(item=>`<div class="native-message ${item.role} ${item.cursor<=selected.imported_cursor?'already-imported':''}"><div><strong>${item.role==='user'?'User':'Codex'}</strong><span>cursor ${item.cursor}${item.cursor<=selected.imported_cursor?' · imported':''}</span></div><p>${esc(item.content).replace(/\n/g,'<br>')}</p></div>`).join('')}</div>
+  </div>`:`<div class="panel empty">왼쪽에서 Session을 선택하면 전체 대화와 증분 분석 범위를 확인할 수 있습니다.</div>`;
+  const labels={project_updates:'Project',requirements:'Requirements',decisions:'Decisions',milestones:'Milestone',backlog_items:'Backlog',functions:'Functions',screens:'Screens',interfaces:'API / Interfaces',tests:'Tests',policies:'Policies',data_items:'Data Dictionary',design_updates:'Designs',pending:'Pending'};
+  const changes=ci.preview?.changes||{};
+  const changedSections=Object.entries(changes).filter(([,items])=>items?.length).map(([key,items])=>`<div class="change-group"><h4>${esc(labels[key]||key)}</h4>${items.map(item=>`<div class="change-row"><span class="change-op ${item.op==='+'?'add':'modify'}">${esc(item.op)}</span><span>${esc(item.label)}</span></div>`).join('')}</div>`).join('');
+  const deltaPanel=ci.preview?`<div class="panel import-delta"><div class="conversation-preview-head"><div><div class="eyebrow">STRUCTURED DELTA</div><h2>이번 대화에서 발견한 변경</h2></div>${statusChip(ci.preview.status)}</div>${ci.preview.status==='no_changes'?'<div class="empty">새로 분석할 메시지가 없습니다. 동일 범위는 다시 추가되지 않습니다.</div>':(changedSections||'<div class="empty">구조화된 변경이 없습니다.</div>')}<div class="form-actions"><button class="ghost-btn" data-action="cancel-import" data-view="${ci.preview.import_id||''}">취소</button>${ci.preview.import_id?`<button class="primary-btn" data-action="stage-import" data-view="${ci.preview.import_id}">Live Draft에 반영</button>`:''}</div></div>`:'';
+  return `<div class="conversations-intro"><div><div class="eyebrow">NATIVE AI CONVERSATION IMPORT</div><h2>평소 사용하던 AI 대화를 프로젝트 지식으로</h2><p class="muted">Codex에서 자유롭게 대화한 뒤 Session을 선택하세요. 선택한 범위만 로컬에서 읽고, Secret을 마스킹한 구조화 정보만 저장합니다.</p></div><button class="ghost-btn" data-action="refresh-import-sessions">새로고침</button></div>
+  ${providerBox}
+  <div class="conversation-layout"><div class="panel conversation-list"><h3>Codex Sessions</h3>${sessionRows}</div>${selectedPanel}</div>
+  ${deltaPanel}
+  <details class="panel manual-fallback"><summary><strong>Transcript Paste fallback</strong> · Codex 세션을 찾을 수 없을 때</summary><p class="muted">원문은 저장하지 않습니다. Preview/Distill 동안만 메모리에 두고 Secret을 마스킹합니다.</p><textarea id="manualTranscript" placeholder="사용자: ...\nCodex: ..."></textarea><button class="ghost-btn" data-action="preview-manual-import" ${ci.loading?'disabled':''}>Paste Transcript 분석</button></details>`;
+}
+
+async function loadConversationSessions(){
+  if(!state.projectId)return;
+  const result=await api(`/api/conversation-import/sessions?project_id=${state.projectId}&limit=50`);
+  state.conversationImport.provider=result.provider; state.conversationImport.sessions=result.sessions||[];
+  if(state.view==='conversations') render();
+}
+async function selectConversationSession(sessionId){
+  state.conversationImport.preview=null;
+  state.conversationImport.selected=await api(`/api/conversation-import/sessions/${encodeURIComponent(sessionId)}?project_id=${state.projectId}`);
+  render();
+}
+async function previewSelectedConversation(){
+  const selected=state.conversationImport.selected; if(!selected)return;
+  state.conversationImport.loading=true; render();
+  try{
+    state.conversationImport.preview=await api('/api/conversation-import/preview',{method:'POST',body:JSON.stringify({project_id:state.projectId,provider:'codex',session_id:selected.session.session_id,from_cursor:selected.imported_cursor,to_cursor:selected.next_to_cursor})});
+  }finally{state.conversationImport.loading=false;render();}
+}
+async function previewManualConversation(){
+  const transcript=$('#manualTranscript')?.value?.trim(); if(!transcript){toast('Transcript를 입력하세요.');return;}
+  state.conversationImport.loading=true; render();
+  try{
+    state.conversationImport.preview=await api('/api/conversation-import/preview',{method:'POST',body:JSON.stringify({project_id:state.projectId,provider:'manual',transcript})});
+  }finally{state.conversationImport.loading=false;render();}
+}
+async function stageConversationImport(importId){
+  if(!importId)return; await api(`/api/conversation-imports/${importId}/draft`,{method:'POST',body:'{}'}); await loadSnapshot(); await loadConversationSessions(); toast('13개 문서와 3개 Design Live Draft를 만들었습니다.');
+}
+async function applyConversationImportDraft(importId){
+  if(!importId||!confirm('검토한 Native Conversation Live Draft를 Source of Truth에 적용할까요?'))return;
+  const sessionId=state.conversationImport.selected?.session?.session_id; await api(`/api/conversation-imports/${importId}/apply`,{method:'POST',body:'{}'}); state.conversationImport.preview=null; await loadSnapshot(); await loadConversationSessions(); if(sessionId)await selectConversationSession(sessionId); toast('Source of Truth에 적용했습니다. 다음 chunk가 있으면 이어서 분석할 수 있습니다.');
+}
+async function cancelConversationImport(importId){
+  if(!importId){state.conversationImport.preview=null;render();return;}
+  if(!confirm('이 Import Preview/Live Draft를 취소할까요? Active Source of Truth는 변경되지 않습니다.'))return;
+  await api(`/api/conversation-imports/${importId}/cancel`,{method:'POST',body:'{}'}); state.conversationImport.preview=null; await loadSnapshot(); await loadConversationSessions(); toast('Conversation Import를 취소했습니다.');
+}
+
 function inlineMarkdown(text){
   let s=esc(text??'');
   s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
@@ -185,7 +262,7 @@ function renderDocuments(){
   const d=s.documents.find(x=>x.id===state.selectedDocumentId);
   const comments=s.document_comments.filter(c=>c.document_id===d.id);
   const completed=s.documents.filter(x=>['review','approved','complete'].includes(x.status)).length;
-  const headings=markdownHeadings(d.content); const quality=documentQuality(d); const editing=state.documentEditMode;
+  const headings=markdownHeadings(d.content); const quality=documentQuality(d); const editing=state.documentEditMode&&!s.live_draft;
   const renderedDocumentBody=d.doc_type==='milestone'&&typeof MilestoneGantt!=='undefined'?MilestoneGantt.render(d.content,d.title,s.project.name):renderMarkdownDocument(d.content);
   const toc=headings.length?`<nav class="doc-toc"><div class="doc-toc-title">목차</div>${headings.map(h=>`<a class="lv${h.level}" href="#${h.id}">${esc(h.text)}</a>`).join('')}</nav>`:'';
   return `<div class="documents-head"><div><div class="eyebrow">DELIVERABLE WORKSPACE</div><h2>프로젝트 공식 산출물 ${completed}/${s.documents.length}</h2><p class="muted">Markdown은 원본 포맷으로 유지하고, 기본 화면에서는 실무 보고서 형태로 렌더링합니다.</p></div><div><button class="mini-btn" data-action="export-project">산출물 패키지 ZIP</button></div></div>
@@ -194,7 +271,7 @@ function renderDocuments(){
     <div class="document-stage">
       <div class="document-stage-toolbar">
         <div><span class="chip ${quality.score>=85?'good':quality.score>=65?'warn':''}">문서 품질 ${quality.score} · ${quality.label}</span>${s.project.lifecycle==='draft'?'<span class="chip warn">Live Draft</span>':''}</div>
-        <div class="doc-view-actions"><button class="mini-btn ${!editing?'active':''}" data-action="document-read-mode">문서 보기</button><button class="mini-btn ${editing?'active':''}" data-action="document-edit-mode">Markdown 편집</button><button class="mini-btn" data-action="print-document">인쇄/PDF</button></div>
+        <div class="doc-view-actions"><button class="mini-btn ${!editing?'active':''}" data-action="document-read-mode">문서 보기</button>${s.live_draft?'<span class="chip warn">Review-only overlay</span>':`<button class="mini-btn ${editing?'active':''}" data-action="document-edit-mode">Markdown 편집</button>`}<button class="mini-btn" data-action="print-document">인쇄/PDF</button></div>
       </div>
       ${editing?`<div class="panel document-editor">
         <div class="document-editor-head"><div><h3>${esc(d.title)}</h3><small class="muted">${esc(d.doc_type)} · 마지막 수정 ${new Date(d.updated_at).toLocaleString('ko-KR')}</small></div>${statusChip(d.status)}</div>
@@ -296,9 +373,10 @@ function guidedTextarea(name,label,hint,example,value=''){
   return `<div class="field intake-field"><label>${esc(label)}</label><small class="field-hint">${esc(hint)}</small><textarea name="${name}" placeholder="${esc(example)}">${esc(value)}</textarea></div>`;
 }
 function selectField(name,label,options,current=''){ return `<div class="field"><label>${esc(label)}</label><select name="${name}">${options.map(([v,t])=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(t)}</option>`).join('')}</select></div>`; }
-function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',assistant:'start-assistant-current',documents:'document-help',traceability:'add-trace-link',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
+function openAddForView(){ handleAction({overview:'add-task',definition:'add-requirement',assistant:'start-assistant-current',conversations:'refresh-import-sessions',documents:'document-help',traceability:'add-trace-link',progress:'add-task',process:'add-node',architecture:'add-node',dataflow:'add-node',ideas:'add-idea',team:'add-member'}[state.view],['process','architecture','dataflow'].includes(state.view)?state.view:null); }
 function handleAction(action, view){
   if(action==='new-project') return newProject(); if(action==='start-ai-project') return startAIProject(false); if(action==='start-assistant-current') return startAIProject(true); if(action==='apply-conversation') return applyConversation(); if(action==='assistant-pair-help') return assistantPairHelp(); if(action==='add-task') return addTask(); if(action==='add-requirement') return addRequirement(); if(action==='edit-goal') return editGoal();
+  if(action==='refresh-import-sessions') return loadConversationSessions(); if(action==='select-import-session') return selectConversationSession(view); if(action==='preview-import') return previewSelectedConversation(); if(action==='preview-manual-import') return previewManualConversation(); if(action==='stage-import') return stageConversationImport(Number(view)); if(action==='apply-import-draft') return applyConversationImportDraft(Number(view)); if(action==='cancel-import') return cancelConversationImport(Number(view));
   if(action==='save-document') return saveDocument(); if(action==='document-help') return documentHelp(); if(action==='document-read-mode'){state.documentEditMode=false;return render();} if(action==='document-edit-mode'){state.documentEditMode=true;return render();} if(action==='print-document') return window.print(); if(action==='export-project') return exportProject(); if(action==='export-document') return exportDocument(); if(action==='add-trace-link') return addTraceLink(); if(action==='delete-trace') return deleteTrace(view);
   if(action==='add-node') return addNode(view); if(action==='add-edge') return addEdge(view); if(action==='add-idea') return addIdea(); if(action==='add-decision') return addDecision(); if(action==='add-member') return addMember(); if(action==='add-ai-job') return addAIJob(); if(action==='bridge-help') return bridgeHelp();
 }

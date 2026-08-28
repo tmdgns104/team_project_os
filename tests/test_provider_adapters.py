@@ -123,6 +123,18 @@ class ProviderAdapterTests(unittest.TestCase):
             self.assertEqual(inv.stdin_text, LONG_PROMPT)
             self.assertIn("--skip-git-repo-check", inv.command)
 
+    def test_codex_conversation_distiller_is_ephemeral_and_read_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            inv = build_invocation(
+                "codex", LONG_PROMPT, cwd=Path(td), purpose="conversation-import"
+            )
+            self.assertIn("--ephemeral", inv.command)
+            self.assertIn("read-only", inv.command)
+            self.assertIn("--ignore-rules", inv.command)
+            self.assertIn("--ignore-user-config", inv.command)
+            self.assertEqual(inv.command[-1], "-")
+            self.assertEqual(inv.stdin_text, LONG_PROMPT)
+
     def test_antigravity_does_not_auto_approve_all_permissions(self):
         with tempfile.TemporaryDirectory() as td:
             inv = build_invocation("antigravity", LONG_PROMPT, cwd=Path(td), purpose="interview")

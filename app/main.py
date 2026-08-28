@@ -680,6 +680,14 @@ def conversation_snapshot(conn: sqlite3.Connection, project_id: int) -> dict[str
     }
 
 
+def conversation_live_draft_snapshot(
+    conn: sqlite3.Connection, project_id: int
+) -> dict[str, Any] | None:
+    """V0.16 extension point; older entry points have no overlay."""
+
+    return None
+
+
 def apply_project_brief_to_documents(conn: sqlite3.Connection, project_id: int, payload: ProjectCreate) -> None:
     data = payload.model_dump()
     save_project_brief(conn, project_id, data)
@@ -1495,10 +1503,12 @@ def snapshot(project_id: int, x_access_key: str | None = Header(default=None)):
         derived_links = derived_trace_links(tasks)
         project_brief = ensure_project_brief(conn, project_id)
         conversation = conversation_snapshot(conn, project_id)
+        live_draft = conversation_live_draft_snapshot(conn, project_id)
         return {
             "project": project,
             "project_brief": project_brief,
             "conversation": conversation,
+            "live_draft": live_draft,
             "requirements": [dict(r) for r in conn.execute("SELECT * FROM requirements WHERE project_id=? ORDER BY id", (project_id,))],
             "tasks": tasks,
             "nodes": [dict(r) for r in conn.execute("SELECT * FROM nodes WHERE project_id=? ORDER BY id", (project_id,))],

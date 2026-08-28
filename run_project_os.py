@@ -30,7 +30,7 @@ def main() -> int:
     if not args.no_install:
         subprocess.check_call([str(VENV_PYTHON), "-m", "pip", "install", "-r", "requirements.txt"], cwd=ROOT)
     return subprocess.call([
-        str(VENV_PYTHON), "-m", "uvicorn", "app.main_v015:app",
+        str(VENV_PYTHON), "-m", "uvicorn", "app.main_v016:app",
         "--host", args.host, "--port", str(args.port),
     ], cwd=ROOT)
 

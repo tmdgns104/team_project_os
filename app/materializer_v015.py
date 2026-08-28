@@ -34,6 +34,7 @@ def _weeks(schedule: str) -> int:
 def _meta(state: dict[str, Any], status: str = "Draft") -> str:
     accepted = [d for d in state.get("decisions", []) if str(d.get("status", "")).lower() in {"accepted", "confirmed"}]
     provisional = [d for d in state.get("decisions", []) if str(d.get("status", "")).lower() in {"provisional", "proposed"}]
+    alternatives = [d for d in state.get("decisions", []) if str(d.get("status", "")).lower() in {"rejected", "alternative"}]
     pending = state.get("pending", []) or []
     reqs = [r.get("ref") for r in state.get("requirements", []) if r.get("ref")]
     verification = sorted({str(r.get("verification") or "").strip() for r in state.get("requirements", []) if str(r.get("verification") or "").strip()})
@@ -42,6 +43,7 @@ def _meta(state: dict[str, Any], status: str = "Draft") -> str:
 > Version: 0.15-draft · Status: {status} · Updated: {today}  
 > Confirmed Decisions: {', '.join(_s(d.get('title'), '') for d in accepted) or '없음'}  
 > PROVISIONAL Decisions: {', '.join(_s(d.get('title'), '') for d in provisional) or '없음'}  
+> Rejected / Alternatives: {', '.join(_s(d.get('title'), '') for d in alternatives) or '없음'}
 > Related Requirements: {', '.join(reqs) or 'TBD'}  
 > Verification: {', '.join(verification) or 'Review / Test'}  
 > Pending: {'; '.join(_s(p, '') for p in pending) or '없음'}
@@ -244,6 +246,88 @@ def document_regressed(old_content: str, new_content: str) -> bool:
     if len(str(old_content or "")) > max(900, int(len(str(new_content or "")) * 1.35)):
         return True
     return False
+
+
+V016_ADDITIONS_BEGIN = "<!-- V016-CONVERSATION-ADDITIONS:BEGIN -->"
+V016_ADDITIONS_END = "<!-- V016-CONVERSATION-ADDITIONS:END -->"
+
+
+def _without_v016_additions(content: str) -> str:
+    pattern = re.compile(
+        rf"\n*{re.escape(V016_ADDITIONS_BEGIN)}.*?{re.escape(V016_ADDITIONS_END)}\n*",
+        re.S,
+    )
+    return pattern.sub("\n", str(content or "")).rstrip()
+
+
+def _v016_addition_lines(content: str) -> list[str]:
+    pattern = re.compile(
+        rf"{re.escape(V016_ADDITIONS_BEGIN)}(.*?){re.escape(V016_ADDITIONS_END)}",
+        re.S,
+    )
+    match = pattern.search(str(content or ""))
+    if not match:
+        return []
+    return [
+        line.rstrip()
+        for line in match.group(1).splitlines()
+        if line.strip() and line.strip() != "## Conversation Import Stable-ID Additions"
+    ]
+
+
+def merge_document_non_regressive(old_content: str, new_content: str) -> str:
+    """Preserve a richer human document without repeatedly appending full documents.
+
+    Generated content normally replaces the previous version. When that would regress,
+    retain the human-authored base and add only rows/lines that introduce stable IDs.
+    The bounded marker block is rebuilt on every import, so repeated imports cannot grow
+    the document by duplicating the complete generated document.
+    """
+
+    old_text = str(old_content or "")
+    new_text = str(new_content or "")
+    if not old_text or not document_regressed(old_text, new_text):
+        return new_text
+
+    base = _without_v016_additions(old_text)
+    known_ids = stable_ids(base)
+    additions: list[str] = []
+    added_ids: set[str] = set()
+    control_prefixes = (
+        "> Confirmed Decisions:",
+        "> PROVISIONAL Decisions:",
+        "> Rejected / Alternatives:",
+        "> Pending:",
+    )
+    # Prefer the latest generated row for a stable ID, then retain prior imported
+    # rows that are absent from the new generation. This keeps one bounded block
+    # without losing an earlier imported identity.
+    candidate_lines = [*new_text.splitlines(), *_v016_addition_lines(old_text)]
+    for line in candidate_lines:
+        if line.startswith(control_prefixes) and line not in base and line not in additions:
+            additions.append(line.rstrip())
+            continue
+        line_ids = stable_ids(line)
+        missing = line_ids - known_ids - added_ids
+        if not missing:
+            continue
+        stripped = line.strip()
+        if not stripped or stripped.startswith("|---"):
+            continue
+        additions.append(line.rstrip())
+        added_ids.update(missing)
+
+    if not additions:
+        return base
+    return (
+        base
+        + "\n\n"
+        + V016_ADDITIONS_BEGIN
+        + "\n## Conversation Import Stable-ID Additions\n\n"
+        + "\n".join(additions)
+        + "\n"
+        + V016_ADDITIONS_END
+    )
 
 
 def graph_quality(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> int:

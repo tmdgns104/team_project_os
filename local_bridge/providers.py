@@ -87,6 +87,7 @@ def build_invocation(
     cwd: Path,
     purpose: str = "interview",
     custom_command: str | None = None,
+    output_schema: Path | None = None,
 ) -> ProviderInvocation:
     if provider not in SUPPORTED_PROVIDERS:
         raise RuntimeError(f"Unsupported provider: {provider}")
@@ -117,6 +118,45 @@ def build_invocation(
         cmd = ["codex", "exec"]
         if purpose == "interview":
             cmd.append("--skip-git-repo-check")
+        elif purpose == "conversation-import":
+            # The transcript is untrusted. Keep the inference process ephemeral,
+            # read-only, outside the project, and without agent tools that can inspect
+            # local files or browse beyond the model transport itself.
+            cmd.extend([
+                "--ephemeral",
+                "--sandbox", "read-only",
+                "--skip-git-repo-check",
+                "--ignore-rules",
+                "--ignore-user-config",
+                "--strict-config",
+                "-c", "sandbox_workspace_write.network_access=false",
+                "--cd", str(cwd),
+                "--disable", "shell_tool",
+                "--disable", "unified_exec",
+                "--disable", "code_mode_host",
+                "--disable", "apps",
+                "--disable", "plugins",
+                "--disable", "browser_use",
+                "--disable", "view_image",
+                "--disable", "image_generation",
+                "--disable", "multi_agent",
+                "--disable", "browser_use_external",
+                "--disable", "in_app_browser",
+                "--disable", "in_app_local_automation",
+                "--disable", "computer_use",
+                "--disable", "standalone_web_search",
+                "--disable", "web_search_request",
+                "--disable", "hooks",
+                "--disable", "skill_search",
+                "--disable", "skill_mcp_dependency_install",
+                "--disable", "tool_suggest",
+                "--disable", "tool_call_mcp_elicitation",
+                "--disable", "auth_elicitation",
+                "--disable", "remote_plugin",
+                "--disable", "goals",
+            ])
+            if output_schema is not None:
+                cmd.extend(["--output-schema", str(output_schema)])
         cmd.append("-")
         return ProviderInvocation(provider=provider, command=cmd, stdin_text=prompt)
 
@@ -187,6 +227,8 @@ def run_provider(
     purpose: str = "interview",
     custom_command: str | None = None,
     timeout_seconds: int = 60 * 45,
+    output_schema: Path | None = None,
+    environment: dict[str, str] | None = None,
 ) -> ProviderResult:
     cwd = cwd.expanduser().resolve()
     if not cwd.exists() or not cwd.is_dir():
@@ -198,6 +240,7 @@ def run_provider(
         cwd=cwd,
         purpose=purpose,
         custom_command=custom_command,
+        output_schema=output_schema,
     )
     launch_cmd = prepare_local_command(invocation.command)
 
@@ -210,7 +253,7 @@ def run_provider(
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=_utf8_subprocess_env(),
+            env=environment if environment is not None else _utf8_subprocess_env(),
             timeout=timeout_seconds,
         )
         return ProviderResult(
