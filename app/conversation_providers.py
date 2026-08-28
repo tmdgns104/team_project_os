@@ -5,7 +5,9 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +82,11 @@ class CodexConversationProvider(ConversationProvider):
     """
 
     provider_name = "codex"
+    _metadata_cache: OrderedDict[
+        tuple[str, int, int, bool, str], ConversationSession
+    ] = OrderedDict()
+    _cache_lock = threading.RLock()
+    _cache_limit = 1_000
 
     def __init__(self, codex_home: Path | str | None = None, executable: str | None = None):
         configured_home = (
@@ -359,6 +366,51 @@ class CodexConversationProvider(ConversationProvider):
             messages,
         )
 
+    @classmethod
+    def clear_metadata_cache(cls) -> None:
+        with cls._cache_lock:
+            cls._metadata_cache.clear()
+
+    def _metadata_for_path(
+        self, path: Path, *, archived: bool, indexed_title: str
+    ) -> ConversationSession:
+        try:
+            stat = path.stat()
+            cache_key = (
+                str(path.resolve()),
+                int(stat.st_mtime_ns),
+                int(stat.st_size),
+                archived,
+                indexed_title,
+            )
+        except OSError:
+            session, _messages = self._parse_rollout(
+                path,
+                archived=archived,
+                include_messages=False,
+                indexed_title=indexed_title,
+            )
+            return session
+
+        with self._cache_lock:
+            cached = self._metadata_cache.get(cache_key)
+            if cached is not None:
+                self._metadata_cache.move_to_end(cache_key)
+                return cached
+
+        session, _messages = self._parse_rollout(
+            path,
+            archived=archived,
+            include_messages=False,
+            indexed_title=indexed_title,
+        )
+        with self._cache_lock:
+            self._metadata_cache[cache_key] = session
+            self._metadata_cache.move_to_end(cache_key)
+            while len(self._metadata_cache) > self._cache_limit:
+                self._metadata_cache.popitem(last=False)
+        return session
+
     @staticmethod
     def _mtime_iso(path: Path) -> str:
         try:
@@ -371,11 +423,8 @@ class CodexConversationProvider(ConversationProvider):
         sessions: list[ConversationSession] = []
         for path, archived in self._session_files()[: max(1, min(limit, 500))]:
             session_id = self._id_from_filename(path)
-            session, _messages = self._parse_rollout(
-                path,
-                archived=archived,
-                include_messages=False,
-                indexed_title=titles.get(session_id, ""),
+            session = self._metadata_for_path(
+                path, archived=archived, indexed_title=titles.get(session_id, "")
             )
             sessions.append(session)
         return sessions
@@ -383,10 +432,9 @@ class CodexConversationProvider(ConversationProvider):
     def get_session_metadata(self, session_id: str) -> ConversationSession:
         path, archived = self._path_for_session(session_id)
         titles = self._title_index()
-        session, _messages = self._parse_rollout(
+        session = self._metadata_for_path(
             path,
             archived=archived,
-            include_messages=False,
             indexed_title=titles.get(session_id.lower(), ""),
         )
         return session

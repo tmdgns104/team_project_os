@@ -155,8 +155,8 @@ function renderConversations(){
   const selected=ci.selected;
   const messages=selected?.messages||[];
   const selectedPanel=selected?`<div class="panel conversation-preview">
-    <div class="conversation-preview-head"><div><div class="eyebrow">SELECTED SESSION</div><h2>${esc(selected.session.title)}</h2><p class="muted">Session ${esc(selected.session.session_id)} · 이전 Import cursor ${selected.imported_cursor}</p></div><button class="primary-btn" data-action="preview-import" ${ci.loading||!selected.analysis_messages.length?'disabled':''}>${ci.loading?'분석 중…':`새 메시지 ${selected.analysis_messages.length}개 분석`}</button></div>
-    <div class="analysis-range"><strong>이번 분석 범위</strong> · cursor &gt; ${selected.imported_cursor} · ${selected.analysis_messages.length} messages${selected.imported_at?` · 마지막 Import ${new Date(selected.imported_at).toLocaleString('ko-KR')}`:''}</div>
+    <div class="conversation-preview-head"><div><div class="eyebrow">SELECTED SESSION</div><h2>${esc(selected.session.title)}</h2><p class="muted">Session ${esc(selected.session.session_id)} · 이전 Import cursor ${selected.imported_cursor}</p></div><button class="primary-btn" data-action="preview-import" ${ci.loading||!selected.analysis_messages.length?'disabled':''}>${ci.loading?'분석 중…':`다음 ${selected.analysis_messages.length}개 분석`}</button></div>
+    <div class="analysis-range"><strong>이번 분석 범위</strong> · cursor &gt; ${selected.imported_cursor} ~ ${selected.next_to_cursor} · ${selected.analysis_messages.length}/${selected.total_unimported} messages${selected.remaining_after_chunk?` · 이후 ${selected.remaining_after_chunk}개 남음`:''}${selected.imported_at?` · 마지막 Import ${new Date(selected.imported_at).toLocaleString('ko-KR')}`:''}</div>
     <div class="native-transcript">${messages.map(item=>`<div class="native-message ${item.role} ${item.cursor<=selected.imported_cursor?'already-imported':''}"><div><strong>${item.role==='user'?'User':'Codex'}</strong><span>cursor ${item.cursor}${item.cursor<=selected.imported_cursor?' · imported':''}</span></div><p>${esc(item.content).replace(/\n/g,'<br>')}</p></div>`).join('')}</div>
   </div>`:`<div class="panel empty">왼쪽에서 Session을 선택하면 전체 대화와 증분 분석 범위를 확인할 수 있습니다.</div>`;
   const labels={project_updates:'Project',requirements:'Requirements',decisions:'Decisions',milestones:'Milestone',backlog_items:'Backlog',functions:'Functions',screens:'Screens',interfaces:'API / Interfaces',tests:'Tests',policies:'Policies',data_items:'Data Dictionary',design_updates:'Designs',pending:'Pending'};
@@ -185,7 +185,7 @@ async function previewSelectedConversation(){
   const selected=state.conversationImport.selected; if(!selected)return;
   state.conversationImport.loading=true; render();
   try{
-    state.conversationImport.preview=await api('/api/conversation-import/preview',{method:'POST',body:JSON.stringify({project_id:state.projectId,provider:'codex',session_id:selected.session.session_id})});
+    state.conversationImport.preview=await api('/api/conversation-import/preview',{method:'POST',body:JSON.stringify({project_id:state.projectId,provider:'codex',session_id:selected.session.session_id,from_cursor:selected.imported_cursor,to_cursor:selected.next_to_cursor})});
   }finally{state.conversationImport.loading=false;render();}
 }
 async function previewManualConversation(){
@@ -200,7 +200,7 @@ async function stageConversationImport(importId){
 }
 async function applyConversationImportDraft(importId){
   if(!importId||!confirm('검토한 Native Conversation Live Draft를 Source of Truth에 적용할까요?'))return;
-  await api(`/api/conversation-imports/${importId}/apply`,{method:'POST',body:'{}'}); state.conversationImport.preview=null; await loadSnapshot(); await loadConversationSessions(); toast('Source of Truth에 적용했습니다.');
+  const sessionId=state.conversationImport.selected?.session?.session_id; await api(`/api/conversation-imports/${importId}/apply`,{method:'POST',body:'{}'}); state.conversationImport.preview=null; await loadSnapshot(); await loadConversationSessions(); if(sessionId)await selectConversationSession(sessionId); toast('Source of Truth에 적용했습니다. 다음 chunk가 있으면 이어서 분석할 수 있습니다.');
 }
 async function cancelConversationImport(importId){
   if(!importId){state.conversationImport.preview=null;render();return;}

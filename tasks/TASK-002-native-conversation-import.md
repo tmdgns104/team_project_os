@@ -141,3 +141,50 @@ Verification result before the final commit cycle:
 - Diagram/Gantt JavaScript: PASS.
 - Windows launcher and real browser smoke: PASS.
 - Real local Codex read: PASS with conversation content suppressed.
+
+## Blocker closure result — 2026-08-28
+
+The interrupted hardening baseline was independently re-reviewed against the seven
+known blockers. Existing production remediation was preserved, missing deterministic
+tests were added, and four defects exposed by the expanded tests were fixed minimally.
+
+| Blocker | Production Evidence | Regression Evidence | Result |
+|---|---|---|---|
+| 1. Human Edit Preservation / DB-authoritative reconciliation | `reconcile_structured_state` rebuilds official rows and canonical-document catalogs; stale catalog cache entries cannot restore deleted human content | current requirement/document reconciliation; stale cache versus project/requirement/decision/design/catalog precedence; non-conflicting Draft/Apply rebase | PASS |
+| 2. V0.15 → V0.16 catalog/Stable-ID bootstrap | canonical milestone/backlog/function/IA/API/QA/policy/data documents are parsed into the V0.16 cache | cache-free bootstrap verifies all eight catalog prefixes | PASS |
+| 3. Stale Preview/Draft/Apply | persisted base revision/state plus true three-way `rebase_conflicts`; same intended result is non-conflicting and concurrent creation/update is detected | unit three-way semantics; Preview race; Draft/Apply conflict rejection; unrelated human edit preservation | PASS |
+| 4. Large conversation chunking | next range is contiguous and bounded by message/character limits; `from_cursor` cannot skip; UI sends the exact next `to_cursor` | unit bounds; 155-message API range; skip rejection; two-chunk cursor progression | PASS |
+| 5. Distiller isolation | disposable non-repository cwd, strict output schema, allowlisted environment, ephemeral/read-only Codex invocation, broad tool-feature deny-list | isolated cwd/schema/env assertions; required deny-list assertions; Codex 0.150.1 feature parsing | PASS |
+| 6. Repeated document import non-growth | one rebuilt marker block retains human base and prior imported Stable IDs while preferring current generated rows | identical and successive import idempotency/non-growth assertions | PASS |
+| 7. Session inventory performance | thread-safe bounded LRU metadata cache keyed by resolved path, mtime, size, archive state, and indexed title | unchanged rollout reuse and changed rollout invalidation | PASS |
+
+Defects found by the expanded focused tests:
+
+- stale cached catalog IDs survived a canonical-document deletion;
+- the distiller deny-list omitted image and multi-agent tools;
+- a later generated document could discard an earlier imported Stable ID;
+- the conflict detector did not implement same-result/concurrent-creation three-way semantics.
+
+Final verification Evidence:
+
+- Focused blocker suite: 14/14 PASS.
+- Combined V0.16 suite: 24/24 PASS.
+- Full Python regression: 78/78 PASS.
+- Python compile: PASS.
+- V0.14 full simulator: PASS.
+- V0.15 materialization/non-regression simulator: PASS.
+- V0.16 Scenarios A-H simulator: 10/10 PASS.
+- Diagram layout and Milestone Gantt JavaScript tests: PASS.
+- JavaScript syntax and Windows launcher checks: PASS.
+- Native Codex 0.150.1 read-only check: PASS; conversation output suppressed.
+- Git diff whitespace check: PASS.
+- Docker runtime/config rendering: UNVERIFIED because Docker is not installed; the
+  existing static container regression remains PASS.
+
+Security was reviewed separately. No raw transcript is persisted or logged, browser
+session IDs cannot select filesystem paths, subprocess input remains stdin/list-argv,
+and the distiller receives no Project OS access key or database path. This closes the
+seven blockers without changing the approved Architecture or expanding permissions.
+
+Merge readiness: READY on `work/v016-native-conversation-import` after the verified
+Task commit. Do not merge to `main` as part of this Task.

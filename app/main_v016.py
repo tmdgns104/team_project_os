@@ -20,11 +20,17 @@ from app.conversation_import import (
     redact_secrets,
     redact_structure,
     redacted_messages,
+    select_message_chunk,
     summarize_changes,
 )
 from app.conversation_providers import CodexConversationProvider
 from app.live_state_v015 import sanitize_live_state_v015
-from app.materializer_v015 import DOC_TYPES, document_regressed, materialize_documents
+from app.materializer_v015 import DOC_TYPES, materialize_documents, merge_document_non_regressive
+from app.structured_state_v016 import (
+    rebase_conflicts,
+    reconcile_structured_state,
+    source_of_truth_revision,
+)
 
 
 core.app.version = "0.16.0"
@@ -40,6 +46,7 @@ class ImportPreviewRequest(BaseModel):
     provider: str = "codex"
     session_id: str = ""
     from_cursor: int | None = None
+    to_cursor: int | None = None
     transcript: str = Field(default="", max_length=1_000_000)
 
 
@@ -78,6 +85,8 @@ def init_db() -> None:
                 delta_json TEXT NOT NULL DEFAULT '{}',
                 merged_state_json TEXT NOT NULL DEFAULT '{}',
                 diff_json TEXT NOT NULL DEFAULT '{}',
+                base_state_hash TEXT NOT NULL DEFAULT '',
+                base_state_json TEXT NOT NULL DEFAULT '{}',
                 error TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -90,6 +99,8 @@ def init_db() -> None:
                 state_json TEXT NOT NULL,
                 documents_json TEXT NOT NULL,
                 designs_json TEXT NOT NULL,
+                base_state_hash TEXT NOT NULL DEFAULT '',
+                base_state_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -98,6 +109,18 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_conversation_imports_source_status
                 ON conversation_imports(source_id, status);
             """
+        )
+        _ensure_column(
+            conn, "conversation_imports", "base_state_hash", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "conversation_imports", "base_state_json", "TEXT NOT NULL DEFAULT '{}'"
+        )
+        _ensure_column(
+            conn, "project_live_drafts", "base_state_hash", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "project_live_drafts", "base_state_json", "TEXT NOT NULL DEFAULT '{}'"
         )
 
 
@@ -115,6 +138,14 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
         ).fetchone()
     )
+
+
+def _ensure_column(
+    conn: sqlite3.Connection, table: str, column: str, definition: str
+) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def _designs_from_database(conn: sqlite3.Connection, project_id: int) -> list[dict[str, Any]]:
@@ -161,78 +192,13 @@ def _designs_from_database(conn: sqlite3.Connection, project_id: int) -> list[di
 
 
 def load_structured_state(conn: sqlite3.Connection, project_id: int) -> dict[str, Any]:
-    if _table_exists(conn, "project_structured_states"):
-        row = conn.execute(
-            "SELECT state_json FROM project_structured_states WHERE project_id=?",
-            (project_id,),
-        ).fetchone()
-        if row:
-            return sanitize_live_state_v015(_json_load(row["state_json"], {}))
-
-    brief = core.ensure_project_brief(conn, project_id)
-    requirements: list[dict[str, Any]] = []
-    for row in conn.execute(
-        "SELECT * FROM requirements WHERE project_id=? ORDER BY id", (project_id,)
-    ):
-        title = str(row["title"] or "")
-        parts = title.split(" ", 1)
-        ref = parts[0] if parts and parts[0].upper().startswith("REQ-") else ""
-        clean_title = parts[1] if ref and len(parts) > 1 else title
-        requirements.append(
-            {
-                "ref": ref,
-                "title": clean_title,
-                "detail": row["detail"],
-                "status": row["status"],
-                "source": "Existing Project State",
-            }
-        )
-    decisions = []
-    for row in conn.execute(
-        "SELECT * FROM decisions WHERE project_id=? ORDER BY id", (project_id,)
-    ):
-        title = str(row["title"] or "")
-        parts = title.split(" ", 1)
-        ref = parts[0] if parts and parts[0].upper().startswith("DEC-") else ""
-        decisions.append(
-            {
-                "ref": ref,
-                "title": parts[1] if ref and len(parts) > 1 else title,
-                "body": row["body"],
-                "status": row["status"],
-            }
-        )
-    return sanitize_live_state_v015(
-        {
-            "project_updates": {
-                key: value
-                for key, value in brief.items()
-                if value is not None and str(value).strip()
-            },
-            "requirements": requirements,
-            "decisions": decisions,
-            "design_updates": _designs_from_database(conn, project_id),
-        }
-    )
+    return reconcile_structured_state(conn, project_id)
 
 
 def save_structured_state(
     conn: sqlite3.Connection, project_id: int, state: dict[str, Any]
 ) -> None:
-    safe = sanitize_live_state_v015(state)
-    # Materialized document bodies already live in the documents table. Keeping them
-    # out of structured state avoids duplicating large content.
-    safe["document_updates"] = []
-    conn.execute(
-        """
-        INSERT INTO project_structured_states(project_id,state_json,updated_at)
-        VALUES(?,?,?)
-        ON CONFLICT(project_id) DO UPDATE SET
-          state_json=excluded.state_json,
-          updated_at=excluded.updated_at
-        """,
-        (project_id, json.dumps(safe, ensure_ascii=False), core.now()),
-    )
+    reconcile_structured_state(conn, project_id, seed_state=state)
 
 
 def apply_live_draft_state(
@@ -348,12 +314,8 @@ def _materialize_overlay(
         current = existing.get(doc_type, {})
         new_content = generated.get(doc_type, "")
         old_content = str(current.get("content") or "")
-        if old_content and document_regressed(old_content, new_content):
-            new_content = (
-                old_content.rstrip()
-                + "\n\n---\n\n## V0.16 Conversation Import Update\n\n"
-                + new_content.lstrip()
-            )
+        if old_content:
+            new_content = merge_document_non_regressive(old_content, new_content)
         documents.append(
             {
                 "id": current.get("id", len(documents) + 1),
@@ -423,8 +385,50 @@ def _import_response(row: sqlite3.Row, messages: list[dict[str, Any]] | None = N
         "content_hash": row["content_hash"],
         "delta": _json_load(row["delta_json"], {}),
         "changes": _json_load(row["diff_json"], {}),
+        "base_state_hash": row["base_state_hash"],
         "messages": messages or [],
     }
+
+
+def _rebase_import(
+    conn: sqlite3.Connection, row: sqlite3.Row
+) -> tuple[dict[str, Any], str]:
+    """Reapply only the stored delta to the latest official project state."""
+
+    current = reconcile_structured_state(conn, int(row["project_id"]))
+    current_revision = source_of_truth_revision(conn, int(row["project_id"]), current)
+    base = sanitize_live_state_v015(_json_load(row["base_state_json"], {}))
+    delta = sanitize_live_state_v015(_json_load(row["delta_json"], {}))
+    if row["base_state_hash"] and row["base_state_hash"] != current_revision:
+        conflicts = rebase_conflicts(base, current, delta)
+        if conflicts:
+            raise HTTPException(
+                409,
+                detail={
+                    "message": "Project changed after Preview; review the conflicting stable IDs",
+                    "conflicts": conflicts,
+                },
+            )
+
+    merged = merge_structured_states(current, delta)
+    changes = summarize_changes(current, merged)
+    timestamp = core.now()
+    conn.execute(
+        """
+        UPDATE conversation_imports
+        SET base_state_hash=?,base_state_json=?,merged_state_json=?,diff_json=?,updated_at=?
+        WHERE id=?
+        """,
+        (
+            current_revision,
+            json.dumps(current, ensure_ascii=False),
+            json.dumps(merged, ensure_ascii=False),
+            json.dumps(changes, ensure_ascii=False),
+            timestamp,
+            row["id"],
+        ),
+    )
+    return merged, current_revision
 
 
 @core.app.get("/api/conversation-import/providers")
@@ -476,7 +480,7 @@ def conversation_import_session(
     provider = _provider()
     try:
         metadata = provider.get_session_metadata(session_id)
-        all_messages = redacted_messages(provider.read_messages(session_id))
+        native_messages = provider.read_messages(session_id)
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(404, str(exc)) from exc
     with core.db() as conn:
@@ -488,13 +492,22 @@ def conversation_import_session(
             (session_id, project_id),
         ).fetchone()
     cursor = source["imported_cursor"] if source else -1
+    selected, total_unimported = select_message_chunk(
+        native_messages, after_cursor=int(cursor)
+    )
+    all_messages = redacted_messages(native_messages)
+    analysis_messages = redacted_messages(selected)
     safe_metadata = metadata.to_dict()
     safe_metadata["title"] = redact_secrets(safe_metadata.get("title", ""))
     return {
         "session": safe_metadata,
         "messages": all_messages,
         "imported_cursor": cursor,
-        "analysis_messages": [item for item in all_messages if item["cursor"] > cursor],
+        "analysis_messages": analysis_messages,
+        "total_unimported": total_unimported,
+        "remaining_after_chunk": max(0, total_unimported - len(analysis_messages)),
+        "has_more": total_unimported > len(analysis_messages),
+        "next_to_cursor": analysis_messages[-1]["cursor"] if analysis_messages else cursor,
         "imported_at": source["imported_at"] if source else "",
     }
 
@@ -518,6 +531,7 @@ async def preview_conversation_import(
         ).fetchone():
             raise HTTPException(409, "Review, Apply, or discard the current Live Draft first")
         current_state = load_structured_state(conn, payload.project_id)
+        current_revision = source_of_truth_revision(conn, payload.project_id, current_state)
 
     source_version = "manual-v1"
     if payload.provider == "codex":
@@ -547,9 +561,20 @@ async def preview_conversation_import(
             source_version=source_version,
         )
         imported_cursor = int(source["imported_cursor"])
-    requested_cursor = payload.from_cursor if payload.from_cursor is not None else imported_cursor
-    start_cursor = max(imported_cursor, requested_cursor)
-    selected = [message for message in native_messages if message.cursor > start_cursor]
+    if payload.from_cursor is not None and payload.from_cursor != imported_cursor:
+        raise HTTPException(
+            409,
+            "from_cursor must equal the latest imported cursor; conversation ranges cannot be skipped",
+        )
+    start_cursor = imported_cursor
+    if payload.to_cursor is not None and payload.to_cursor <= start_cursor:
+        raise HTTPException(400, "to_cursor must be after the imported cursor")
+    selected, _bounded_total = select_message_chunk(
+        native_messages,
+        after_cursor=start_cursor,
+        to_cursor=payload.to_cursor,
+    )
+    total_unimported = sum(message.cursor > start_cursor for message in native_messages)
     messages = redacted_messages(selected)
     if not messages:
         return {
@@ -559,15 +584,32 @@ async def preview_conversation_import(
             "end_cursor": start_cursor,
             "messages": [],
             "changes": {},
+            "total_unimported": total_unimported,
+            "remaining_after_chunk": 0,
+            "has_more": False,
         }
     content_hash = conversation_content_hash(payload.provider, session_id, messages)
     with core.db() as conn:
         existing = conn.execute(
-            "SELECT * FROM conversation_imports WHERE source_id=? AND content_hash=?",
+            """
+            SELECT i.*,s.project_id FROM conversation_imports i
+            JOIN conversation_sources s ON s.id=i.source_id
+            WHERE i.source_id=? AND i.content_hash=?
+            """,
             (source["id"], content_hash),
         ).fetchone()
         if existing:
-            return _import_response(existing, messages)
+            _rebase_import(conn, existing)
+            refreshed = conn.execute(
+                "SELECT * FROM conversation_imports WHERE id=?", (existing["id"],)
+            ).fetchone()
+            return {
+                **_import_response(refreshed, messages),
+                "session_id": session_id,
+                "total_unimported": total_unimported,
+                "remaining_after_chunk": max(0, total_unimported - len(messages)),
+                "has_more": total_unimported > len(messages),
+            }
 
     try:
         delta = await asyncio.to_thread(
@@ -575,22 +617,35 @@ async def preview_conversation_import(
             messages=messages,
             current_state=current_state,
             project_name=project["name"],
-            cwd=core.BASE_DIR,
         )
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
     delta = redact_structure(delta)
-    merged = merge_structured_states(current_state, delta)
-    changes = summarize_changes(current_state, merged)
     end_cursor = max(int(item["cursor"]) for item in messages)
     timestamp = core.now()
     with core.db() as conn:
+        latest_state = load_structured_state(conn, payload.project_id)
+        latest_revision = source_of_truth_revision(conn, payload.project_id, latest_state)
+        if latest_revision != current_revision:
+            conflicts = rebase_conflicts(current_state, latest_state, delta)
+            if conflicts:
+                raise HTTPException(
+                    409,
+                    detail={
+                        "message": "Project changed during Preview; review the conflicting stable IDs",
+                        "conflicts": conflicts,
+                    },
+                )
+            current_state = latest_state
+            current_revision = latest_revision
+        merged = merge_structured_states(current_state, delta)
+        changes = summarize_changes(current_state, merged)
         conn.execute(
             """
             INSERT OR IGNORE INTO conversation_imports(
               source_id,start_cursor,end_cursor,content_hash,status,delta_json,
-              merged_state_json,diff_json,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?)
+              merged_state_json,diff_json,base_state_hash,base_state_json,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 source["id"],
@@ -601,6 +656,8 @@ async def preview_conversation_import(
                 json.dumps(delta, ensure_ascii=False),
                 json.dumps(merged, ensure_ascii=False),
                 json.dumps(changes, ensure_ascii=False),
+                current_revision,
+                json.dumps(current_state, ensure_ascii=False),
                 timestamp,
                 timestamp,
             ),
@@ -609,7 +666,13 @@ async def preview_conversation_import(
             "SELECT * FROM conversation_imports WHERE source_id=? AND content_hash=?",
             (source["id"], content_hash),
         ).fetchone()
-    return {**_import_response(row, messages), "session_id": session_id}
+    return {
+        **_import_response(row, messages),
+        "session_id": session_id,
+        "total_unimported": total_unimported,
+        "remaining_after_chunk": max(0, total_unimported - len(messages)),
+        "has_more": total_unimported > len(messages),
+    }
 
 
 @core.app.post("/api/conversation-imports/{import_id}/draft")
@@ -636,21 +699,22 @@ async def stage_conversation_import(
         ).fetchone()
         if existing and existing["import_id"] != import_id:
             raise HTTPException(409, "Another Live Draft is already active")
-        if existing and row["status"] == "drafted":
-            return conversation_live_draft_snapshot(conn, row["project_id"])
-        merged = sanitize_live_state_v015(_json_load(row["merged_state_json"], {}))
+        merged, current_revision = _rebase_import(conn, row)
         apply_state, documents, designs = _materialize_overlay(conn, row["project_id"], merged)
         timestamp = core.now()
         conn.execute(
             """
             INSERT INTO project_live_drafts(
-              project_id,import_id,state_json,documents_json,designs_json,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?)
+              project_id,import_id,state_json,documents_json,designs_json,
+              base_state_hash,base_state_json,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
             ON CONFLICT(project_id) DO UPDATE SET
               import_id=excluded.import_id,
               state_json=excluded.state_json,
               documents_json=excluded.documents_json,
               designs_json=excluded.designs_json,
+              base_state_hash=excluded.base_state_hash,
+              base_state_json=excluded.base_state_json,
               updated_at=excluded.updated_at
             """,
             (
@@ -659,6 +723,8 @@ async def stage_conversation_import(
                 json.dumps(apply_state, ensure_ascii=False),
                 json.dumps(documents, ensure_ascii=False),
                 json.dumps(designs, ensure_ascii=False),
+                current_revision,
+                json.dumps(reconcile_structured_state(conn, row["project_id"]), ensure_ascii=False),
                 timestamp,
                 timestamp,
             ),
@@ -708,7 +774,29 @@ async def apply_conversation_import(
         ).fetchone()
         if not draft or row["status"] != "drafted":
             raise HTTPException(409, "Import is not an active Live Draft")
-        state = sanitize_live_state_v015(_json_load(draft["state_json"], {}))
+        merged, current_revision = _rebase_import(conn, row)
+        state, documents, designs = _materialize_overlay(
+            conn, row["project_id"], merged
+        )
+        timestamp = core.now()
+        conn.execute(
+            """
+            UPDATE project_live_drafts
+            SET state_json=?,documents_json=?,designs_json=?,base_state_hash=?,
+                base_state_json=?,updated_at=?
+            WHERE project_id=? AND import_id=?
+            """,
+            (
+                json.dumps(state, ensure_ascii=False),
+                json.dumps(documents, ensure_ascii=False),
+                json.dumps(designs, ensure_ascii=False),
+                current_revision,
+                json.dumps(reconcile_structured_state(conn, row["project_id"]), ensure_ascii=False),
+                timestamp,
+                row["project_id"],
+                import_id,
+            ),
+        )
         project = core.apply_live_draft_state(
             conn,
             row["project_id"],
@@ -716,7 +804,6 @@ async def apply_conversation_import(
             state,
             lifecycle="active",
         )
-        timestamp = core.now()
         conn.execute(
             "UPDATE conversation_imports SET status='applied',applied_at=?,updated_at=? WHERE id=?",
             (timestamp, timestamp, import_id),

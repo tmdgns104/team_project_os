@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,34 @@ from local_bridge.providers import run_provider
 
 
 REDACTED = "[REDACTED_SECRET]"
+MAX_CHUNK_MESSAGES = 150
+MAX_CHUNK_CHARACTERS = 150_000
+MAX_TRANSCRIPT_CHARACTERS = 180_000
+
+DISTILLER_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "project_updates": {"type": "object"},
+        "requirements": {"type": "array", "items": {"type": "object"}},
+        "decisions": {"type": "array", "items": {"type": "object"}},
+        "milestones": {"type": "array", "items": {"type": "object"}},
+        "backlog_items": {"type": "array", "items": {"type": "object"}},
+        "functions": {"type": "array", "items": {"type": "object"}},
+        "screens": {"type": "array", "items": {"type": "object"}},
+        "interfaces": {"type": "array", "items": {"type": "object"}},
+        "tests": {"type": "array", "items": {"type": "object"}},
+        "policies": {"type": "array", "items": {"type": "object"}},
+        "data_items": {"type": "array", "items": {"type": "object"}},
+        "design_updates": {"type": "array", "items": {"type": "object"}},
+        "pending": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "project_updates", "requirements", "decisions", "milestones",
+        "backlog_items", "functions", "screens", "interfaces", "tests",
+        "policies", "data_items", "design_updates", "pending",
+    ],
+    "additionalProperties": False,
+}
 
 SECRET_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.I | re.S),
@@ -65,6 +95,35 @@ def redacted_messages(messages: list[ConversationMessage]) -> list[dict[str, Any
         }
         for message in messages
     ]
+
+
+def select_message_chunk(
+    messages: list[ConversationMessage],
+    *,
+    after_cursor: int,
+    to_cursor: int | None = None,
+    max_messages: int = MAX_CHUNK_MESSAGES,
+    max_characters: int = MAX_CHUNK_CHARACTERS,
+) -> tuple[list[ConversationMessage], int]:
+    """Return the next contiguous bounded range and the total remaining count."""
+
+    eligible = [
+        message
+        for message in messages
+        if message.cursor > after_cursor
+        and (to_cursor is None or message.cursor <= to_cursor)
+    ]
+    selected: list[ConversationMessage] = []
+    characters = 0
+    for message in eligible:
+        safe_length = len(redact_secrets(message.content)[:40_000])
+        if selected and (
+            len(selected) >= max_messages or characters + safe_length > max_characters
+        ):
+            break
+        selected.append(message)
+        characters += safe_length
+    return selected, len(eligible)
 
 
 def redact_structure(value: Any) -> Any:
@@ -353,7 +412,7 @@ def build_distiller_prompt(
         f"[{item.get('cursor')}] {str(item.get('role')).upper()}:\n{item.get('content')}"
         for item in messages
     )
-    if len(transcript) > 180_000:
+    if len(transcript) > MAX_TRANSCRIPT_CHARACTERS:
         raise ValueError("Selected conversation range is too large; choose a smaller range")
     current_json = json.dumps(
         redact_structure(current_state), ensure_ascii=False, separators=(",", ":")
@@ -412,22 +471,56 @@ def distill_conversation(
     messages: list[dict[str, Any]],
     current_state: dict[str, Any],
     project_name: str,
-    cwd: Path,
+    cwd: Path | None = None,
 ) -> dict[str, Any]:
-    """Run Codex ephemerally; callers persist only the normalized result."""
+    """Run structured inference in a disposable directory with agent tools disabled."""
 
     prompt = build_distiller_prompt(
         messages=messages,
         current_state=current_state,
         project_name=project_name,
     )
-    result = run_provider(
-        "codex",
-        prompt,
-        cwd=cwd,
-        purpose="conversation-import",
-        timeout_seconds=15 * 60,
-    )
+    with tempfile.TemporaryDirectory(prefix="project-os-distiller-") as directory:
+        isolation_root = Path(directory).resolve()
+        schema_path = isolation_root / "conversation-delta.schema.json"
+        schema_path.write_text(
+            json.dumps(DISTILLER_OUTPUT_SCHEMA, ensure_ascii=False), encoding="utf-8"
+        )
+        result = run_provider(
+            "codex",
+            prompt,
+            cwd=isolation_root,
+            purpose="conversation-import",
+            timeout_seconds=15 * 60,
+            output_schema=schema_path,
+            environment=_distiller_environment(isolation_root),
+        )
     if not result.ok:
         raise RuntimeError(f"Codex distiller failed with exit code {result.returncode}")
     return redact_structure(normalize_import_delta(redact_secrets(result.stdout), current_state))
+
+
+def _distiller_environment(isolation_root: Path) -> dict[str, str]:
+    """Allow only process/runtime paths; omit project configuration and credential env vars."""
+
+    allowed = {
+        "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "APPDATA",
+        "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+        "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "LANG", "LC_ALL",
+    }
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in allowed
+    }
+    codex_home = os.getenv("CODEX_HOME") or str(Path.home() / ".codex")
+    environment.update(
+        {
+            "CODEX_HOME": codex_home,
+            "TEMP": str(isolation_root),
+            "TMP": str(isolation_root),
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    return environment
