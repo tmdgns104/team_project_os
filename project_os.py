@@ -4,7 +4,7 @@ import argparse
 import subprocess
 import sys
 
-from local_bridge.project_cli_v014 import main as project_cli_main
+from local_bridge.project_cli_v015 import main as project_cli_main
 from local_bridge.providers_v014 import SUPPORTED_PROVIDERS, print_doctor
 
 
@@ -22,7 +22,7 @@ def _add_design_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Team Project OS V0.14")
+    parser = argparse.ArgumentParser(description="Team Project OS V0.15")
     sub = parser.add_subparsers(dest="sub", required=True)
 
     design = sub.add_parser("design", help="AI와 자유롭게 프로젝트를 구체화한 뒤 /apply로 생성")
@@ -33,7 +33,7 @@ def main() -> int:
     sub.add_parser("doctor", help="연결 가능한 AI CLI 확인")
 
     server = sub.add_parser("server", help="Team Project OS 웹 서버 실행")
-    server.add_argument("--host", default="0.0.0.0")
+    server.add_argument("--host", default="127.0.0.1")
     server.add_argument("--port", default="8000")
 
     args = parser.parse_args()
@@ -42,7 +42,7 @@ def main() -> int:
         return 0
     if args.sub == "server":
         return subprocess.call([
-            sys.executable, "-m", "uvicorn", "app.main_v014:app",
+            sys.executable, "-m", "uvicorn", "app.main_v015:app",
             "--host", args.host, "--port", args.port,
         ])
 
