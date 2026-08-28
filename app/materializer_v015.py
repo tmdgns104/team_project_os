@@ -34,6 +34,7 @@ def _weeks(schedule: str) -> int:
 def _meta(state: dict[str, Any], status: str = "Draft") -> str:
     accepted = [d for d in state.get("decisions", []) if str(d.get("status", "")).lower() in {"accepted", "confirmed"}]
     provisional = [d for d in state.get("decisions", []) if str(d.get("status", "")).lower() in {"provisional", "proposed"}]
+    alternatives = [d for d in state.get("decisions", []) if str(d.get("status", "")).lower() in {"rejected", "alternative"}]
     pending = state.get("pending", []) or []
     reqs = [r.get("ref") for r in state.get("requirements", []) if r.get("ref")]
     verification = sorted({str(r.get("verification") or "").strip() for r in state.get("requirements", []) if str(r.get("verification") or "").strip()})
@@ -42,6 +43,7 @@ def _meta(state: dict[str, Any], status: str = "Draft") -> str:
 > Version: 0.15-draft · Status: {status} · Updated: {today}  
 > Confirmed Decisions: {', '.join(_s(d.get('title'), '') for d in accepted) or '없음'}  
 > PROVISIONAL Decisions: {', '.join(_s(d.get('title'), '') for d in provisional) or '없음'}  
+> Rejected / Alternatives: {', '.join(_s(d.get('title'), '') for d in alternatives) or '없음'}
 > Related Requirements: {', '.join(reqs) or 'TBD'}  
 > Verification: {', '.join(verification) or 'Review / Test'}  
 > Pending: {'; '.join(_s(p, '') for p in pending) or '없음'}

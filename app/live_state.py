@@ -63,9 +63,17 @@ def sanitize_live_state(state: dict[str, Any] | None) -> dict[str, Any]:
         title = _text(raw.get("title"), 300)
         if title:
             status = _text(raw.get("status") or "provisional", 40).lower()
-            if status not in {"accepted", "confirmed", "provisional", "proposed", "pending"}:
+            if status not in {
+                "accepted", "confirmed", "provisional", "proposed", "pending",
+                "rejected", "alternative",
+            }:
                 status = "provisional"
-            decisions.append({"title": title, "body": _text(raw.get("body"), 4000), "status": status})
+            decisions.append({
+                "ref": _text(raw.get("ref"), 80),
+                "title": title,
+                "body": _text(raw.get("body"), 4000),
+                "status": status,
+            })
 
     document_updates = []
     for raw in src.get("document_updates", []) if isinstance(src.get("document_updates"), list) else []:

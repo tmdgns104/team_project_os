@@ -117,6 +117,16 @@ def build_invocation(
         cmd = ["codex", "exec"]
         if purpose == "interview":
             cmd.append("--skip-git-repo-check")
+        elif purpose == "conversation-import":
+            # Distillation is read-only and should not create another native session
+            # that would immediately appear in the import inventory.
+            cmd.extend([
+                "--ephemeral",
+                "--sandbox", "read-only",
+                "--skip-git-repo-check",
+                "--ignore-rules",
+                "--ignore-user-config",
+            ])
         cmd.append("-")
         return ProviderInvocation(provider=provider, command=cmd, stdin_text=prompt)
 
